@@ -1,14 +1,14 @@
 use std::time::Duration;
 
-use palette::{convert::FromColorUnclamped, Okhsv, Srgb};
+use palette::{Okhsv, Srgb, convert::FromColorUnclamped};
 use ratatui::{
+    DefaultTerminal,
     buffer::Buffer,
     crossterm::event::{self, Event, KeyCode, KeyEventKind},
     layout::{Constraint, Layout, Position, Rect},
     style::Color,
     text::Text,
     widgets::Widget,
-    DefaultTerminal,
 };
 
 fn main() -> std::io::Result<()> {
@@ -80,9 +80,7 @@ impl Widget for &mut App {
         use Constraint::{Length, Min};
         let [top, colors] = Layout::vertical([Length(1), Min(0)]).areas(area);
         let [title] = Layout::horizontal([Min(0)]).areas(top);
-        Text::from("Press q to quit")
-            .centered()
-            .render(title, buf);
+        Text::from("Press q to quit").centered().render(title, buf);
         self.colors_widget.render(colors, buf);
     }
 }
