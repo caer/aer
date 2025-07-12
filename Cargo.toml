@@ -1,0 +1,17 @@
+[package]
+name = "cate"
+description = "A toolkit for creating color palettes!"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+readme = "README.md"
+repository = "https://github.com/caer/cate"
+authors = [
+    "With Caer, LLC <hi@caer.cc>",
+]
+
+[dependencies]
+# Colorspaces.
+palette = "0.7.6"
+# Terminal rendering.
+ratatui = "0.29.0"
