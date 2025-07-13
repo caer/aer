@@ -11,6 +11,8 @@ authors = [
 ]
 
 [dependencies]
+codas = "0.5.1"
+codas-macros = "0.5.1"
 # Colorspaces.
 palette = "0.7.6"
 # Terminal rendering.
