@@ -53,15 +53,11 @@ for a total of 32 colors.
    - `90`: `lighter`
    - `95`: `lightest`
 
-+ `magenta` Color #   0 - cmy
-    + `red` Color     #  30 - rgb
-
-+ `orange` Color  #  45 - ???
-
-+ `yellow` Color  #  75 - cmy
-    + `green` Color   # 135 - rgb
-
-+ `cyan` Color    # 180 - cmy
-    + `blue` Color    # 225 - rgb
-        
-+ `purple` Color  # 315 - ???
++ `magenta` Color
++ `red` Color
++ `orange` Color
++ `yellow` Color
++ `green` Color
++ `cyan` Color
++ `blue` Color
++ `purple` Color
