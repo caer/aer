@@ -1,6 +1,10 @@
+extern crate alloc;
+
 use codas::types::Text;
 use codas_macros::export_coda;
-use palette::{IntoColor, Oklch, Srgb};
+use palette::{IntoColor, Oklab, Oklch, Srgb};
+
+pub mod curve;
 
 export_coda!("src/coda.md");
 
@@ -30,6 +34,29 @@ impl Color {
         let srgb = Srgb::<u8>::from_linear(oklch.into_color());
         (srgb.red, srgb.green, srgb.blue)
     }
+
+    /// Returns a copy of this color with the given
+    /// `ligtness` by sampling a point on a quadratic
+    /// curve between white and black controlled by
+    /// this color.
+    pub fn at_lightness(&self, lightness: f32) -> Self {
+        assert!((0.0..=1.0).contains(&lightness));
+
+        let oklch: Oklch = self.into();
+        let oklab: Oklab = oklch.into_color();
+
+        let sampled_color = curve::generate_oklab_samples(oklab, &[lightness])[0];
+        let sampled_oklch: Oklch = sampled_color.into_color();
+
+        sampled_oklch.into()
+    }
+    // pub fn at_lightness(&self, lightness: f32) -> Self {
+    //     assert!((0.0..=1.0).contains(&lightness));
+    //     Self {
+    //         l: lightness,
+    //         ..self.clone()
+    //     }
+    // }
 }
 
 impl From<Oklch> for Color {
@@ -45,5 +72,46 @@ impl From<Oklch> for Color {
 impl From<&Color> for Oklch {
     fn from(value: &Color) -> Self {
         Self::from_components((value.l, value.c, value.h))
+    }
+}
+
+impl<'a> IntoIterator for &'a Neutrals {
+    type Item = &'a Color;
+    type IntoIter = alloc::vec::IntoIter<Self::Item>;
+
+    /// Returns an iterator over the neutral colors,
+    /// in increasing order of their lightness values.
+    fn into_iter(self) -> Self::IntoIter {
+        vec![
+            &self.darkest,
+            &self.darker,
+            &self.dark,
+            &self.darkish,
+            &self.lightish,
+            &self.light,
+            &self.lighter,
+            &self.lightest,
+        ]
+        .into_iter()
+    }
+}
+
+impl<T> From<T> for Neutrals
+where
+    T: core::borrow::Borrow<Color>,
+{
+    fn from(value: T) -> Self {
+        let value = value.borrow();
+
+        Self {
+            darkest: value.at_lightness(0.15),
+            darker: value.at_lightness(0.20),
+            dark: value.at_lightness(0.40),
+            darkish: value.at_lightness(0.50),
+            lightish: value.at_lightness(0.60),
+            light: value.at_lightness(0.70),
+            lighter: value.at_lightness(0.90),
+            lightest: value.at_lightness(0.95),
+        }
     }
 }

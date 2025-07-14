@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use palette::{Okhsv, Srgb, convert::FromColorUnclamped};
 use ratatui::{
     DefaultTerminal,
     buffer::Buffer,
@@ -10,6 +9,12 @@ use ratatui::{
     text::Text,
     widgets::Widget,
 };
+
+fn test_neutrals() -> cate::Neutrals {
+    let color = cate::Color::from_hex("E6E4C8".into());
+    let neutrals = cate::Neutrals::from(&color);
+    neutrals
+}
 
 fn main() -> std::io::Result<()> {
     let terminal = ratatui::init();
@@ -117,27 +122,46 @@ impl ColorsWidget {
     #[allow(clippy::cast_precision_loss)]
     fn setup_colors(&mut self, size: Rect) {
         let Rect { width, height, .. } = size;
+
         // double the height because each screen row has two rows of half block pixels
         let height = height as usize * 2;
         let width = width as usize;
+
         // only update the colors if the size has changed since the last time we rendered
         if self.colors.len() == height && self.colors[0].len() == width {
             return;
         }
+
+        // Generate the vector test colors.
+        let neutrals = test_neutrals();
+        let neutrals = neutrals.into_iter().collect::<Vec<_>>();
+
+        // We'll render the same colors on each line (for now),
+        // evenly distributing them across the width of the frame.
+        let chunks = neutrals.len();
+        let chunk_size = width / chunks;
+        let mut row = Vec::with_capacity(width);
+        for x in 0..width {
+            let neutral_index = (x / chunk_size).min(neutrals.len() - 1);
+            let (r, g, b) = neutrals[neutral_index].to_rgb();
+            let color = Color::Rgb(r, g, b);
+            row.push(color);
+        }
+
         self.colors = Vec::with_capacity(height);
-        for y in 0..height {
-            let mut row = Vec::with_capacity(width);
-            for x in 0..width {
-                let hue = x as f32 * 360.0 / width as f32;
-                let value = (height - y) as f32 / height as f32;
-                let saturation = Okhsv::max_saturation();
-                let color = Okhsv::new(hue, saturation, value);
-                let color = Srgb::<f32>::from_color_unclamped(color);
-                let color: Srgb<u8> = color.into_format();
-                let color = Color::Rgb(color.red, color.green, color.blue);
-                row.push(color);
-            }
-            self.colors.push(row);
+        for _y in 0..height {
+            // let mut row = Vec::with_capacity(width);
+            // for x in 0..width {
+            //     let hue = x as f32 * 360.0 / width as f32;
+            //     let value = (height - y) as f32 / height as f32;
+            //     let saturation = Okhsv::max_saturation();
+            //     let color = Okhsv::new(hue, saturation, value);
+            //     let color = Srgb::<f32>::from_color_unclamped(color);
+            //     let color: Srgb<u8> = color.into_format();
+            //     let color = Color::Rgb(color.red, color.green, color.blue);
+            //     row.push(color);
+            // }
+            self.colors.push(row.clone());
         }
     }
 }
