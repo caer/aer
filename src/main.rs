@@ -10,10 +10,12 @@ use ratatui::{
     widgets::Widget,
 };
 
-fn test_neutrals() -> cate::Neutrals {
-    let color = cate::Color::from_hex("E6E4C8".into());
-    let neutrals = cate::Neutrals::from(&color);
-    neutrals
+fn test_neutrals() -> (cate::Neutrals, cate::Neutrals) {
+    let color = cate::Color::from_hex("F3F1E3".into());
+    (
+        cate::Neutrals::from_color_hue_adjusted(&color),
+        cate::Neutrals::from_color(&color),
+    )
 }
 
 fn main() -> std::io::Result<()> {
@@ -133,35 +135,40 @@ impl ColorsWidget {
         }
 
         // Generate the vector test colors.
-        let neutrals = test_neutrals();
-        let neutrals = neutrals.into_iter().collect::<Vec<_>>();
+        let (neutrals_a, neutrals_b) = test_neutrals();
+        let neutrals_a = neutrals_a.into_iter().collect::<Vec<_>>();
+        let neutrals_b = neutrals_b.into_iter().collect::<Vec<_>>();
 
         // We'll render the same colors on each line (for now),
         // evenly distributing them across the width of the frame.
-        let chunks = neutrals.len();
+        let chunks = neutrals_a.len();
         let chunk_size = width / chunks;
-        let mut row = Vec::with_capacity(width);
+        let mut row_a = Vec::with_capacity(width);
+        let mut row_b = Vec::with_capacity(width);
+        let mut row_c = Vec::with_capacity(width);
         for x in 0..width {
-            let neutral_index = (x / chunk_size).min(neutrals.len() - 1);
-            let (r, g, b) = neutrals[neutral_index].to_rgb();
+            let neutral_index = (x / chunk_size).min(neutrals_a.len() - 1);
+
+            let (r, g, b) = neutrals_a[neutral_index].to_rgb();
             let color = Color::Rgb(r, g, b);
-            row.push(color);
+            row_a.push(color);
+
+            let (r, g, b) = neutrals_b[neutral_index].to_rgb();
+            let color = Color::Rgb(r, g, b);
+            row_b.push(color);
+
+            row_c.push(Color::Reset);
         }
 
         self.colors = Vec::with_capacity(height);
-        for _y in 0..height {
-            // let mut row = Vec::with_capacity(width);
-            // for x in 0..width {
-            //     let hue = x as f32 * 360.0 / width as f32;
-            //     let value = (height - y) as f32 / height as f32;
-            //     let saturation = Okhsv::max_saturation();
-            //     let color = Okhsv::new(hue, saturation, value);
-            //     let color = Srgb::<f32>::from_color_unclamped(color);
-            //     let color: Srgb<u8> = color.into_format();
-            //     let color = Color::Rgb(color.red, color.green, color.blue);
-            //     row.push(color);
-            // }
-            self.colors.push(row.clone());
+        for y in 0..height {
+            if y == height / 2 {
+                self.colors.push(row_c.clone());
+            } else if y > height / 2 {
+                self.colors.push(row_b.clone());
+            } else {
+                self.colors.push(row_a.clone());
+            }
         }
     }
 }

@@ -24,7 +24,7 @@ impl Color {
     pub fn to_hex(&self) -> Text {
         let oklch = Oklch::from(self);
         let srgb = Srgb::<u8>::from_linear(oklch.into_color());
-        format!("#{:x}", srgb).into()
+        format!("#{srgb:x}").into()
     }
 
     /// Returns a tuple of the `(r, g, b)` values
@@ -36,10 +36,12 @@ impl Color {
     }
 
     /// Returns a copy of this color with the given
-    /// `ligtness` by sampling a point on a quadratic
-    /// curve between white and black controlled by
-    /// this color.
-    pub fn at_lightness(&self, lightness: f32) -> Self {
+    /// `lightness` value, with an adjusted hue value.
+    ///
+    /// The adjusted hue is calculated by sampling a
+    /// point on a quadratic curve between pure white
+    /// and black, controlled by this color.
+    pub fn at_hue_adjusted_lightness(&self, lightness: f32) -> Self {
         assert!((0.0..=1.0).contains(&lightness));
 
         let oklch: Oklch = self.into();
@@ -50,13 +52,15 @@ impl Color {
 
         sampled_oklch.into()
     }
-    // pub fn at_lightness(&self, lightness: f32) -> Self {
-    //     assert!((0.0..=1.0).contains(&lightness));
-    //     Self {
-    //         l: lightness,
-    //         ..self.clone()
-    //     }
-    // }
+
+    /// Returns a copy of this color with the given `lightness` value.
+    pub fn at_lightness(&self, lightness: f32) -> Self {
+        assert!((0.0..=1.0).contains(&lightness));
+        Self {
+            l: lightness,
+            ..self.clone()
+        }
+    }
 }
 
 impl From<Oklch> for Color {
@@ -72,6 +76,34 @@ impl From<Oklch> for Color {
 impl From<&Color> for Oklch {
     fn from(value: &Color) -> Self {
         Self::from_components((value.l, value.c, value.h))
+    }
+}
+
+impl Neutrals {
+    pub fn from_color_hue_adjusted(color: &Color) -> Self {
+        Self {
+            darkest: color.at_hue_adjusted_lightness(0.15),
+            darker: color.at_hue_adjusted_lightness(0.20),
+            dark: color.at_hue_adjusted_lightness(0.40),
+            darkish: color.at_hue_adjusted_lightness(0.50),
+            lightish: color.at_hue_adjusted_lightness(0.60),
+            light: color.at_hue_adjusted_lightness(0.70),
+            lighter: color.at_hue_adjusted_lightness(0.90),
+            lightest: color.at_hue_adjusted_lightness(0.95),
+        }
+    }
+
+    pub fn from_color(color: &Color) -> Self {
+        Self {
+            darkest: color.at_lightness(0.15),
+            darker: color.at_lightness(0.20),
+            dark: color.at_lightness(0.40),
+            darkish: color.at_lightness(0.50),
+            lightish: color.at_lightness(0.60),
+            light: color.at_lightness(0.70),
+            lighter: color.at_lightness(0.90),
+            lightest: color.at_lightness(0.95),
+        }
     }
 }
 
@@ -93,25 +125,5 @@ impl<'a> IntoIterator for &'a Neutrals {
             &self.lightest,
         ]
         .into_iter()
-    }
-}
-
-impl<T> From<T> for Neutrals
-where
-    T: core::borrow::Borrow<Color>,
-{
-    fn from(value: T) -> Self {
-        let value = value.borrow();
-
-        Self {
-            darkest: value.at_lightness(0.15),
-            darker: value.at_lightness(0.20),
-            dark: value.at_lightness(0.40),
-            darkish: value.at_lightness(0.50),
-            lightish: value.at_lightness(0.60),
-            light: value.at_lightness(0.70),
-            lighter: value.at_lightness(0.90),
-            lightest: value.at_lightness(0.95),
-        }
     }
 }
