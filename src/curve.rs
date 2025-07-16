@@ -33,16 +33,30 @@ pub fn find_t_for_l(target_l: f32, p0: Oklab, p1: Oklab, p2: Oklab) -> Option<f3
 
 /// TODO:
 pub fn generate_oklab_samples(p1: Oklab, desired_l_values: &[f32]) -> Vec<Oklab> {
-    let start_point = Oklab {
-        l: 1.0,
-        a: 0.0,
-        b: 0.0,
-    }; // Pure white
-    let end_point = Oklab {
-        l: 0.0,
-        a: 0.0,
-        b: 0.0,
-    }; // Pure black
+    let end_point = if p1.l >= 0.5 {
+        let mut point = p1;
+        point.l = 1.0;
+        point
+    } else {
+        Oklab {
+            l: 1.0,
+            a: 0.0,
+            b: 0.0,
+        }
+    };
+
+    let start_point = if p1.l <= 0.5 {
+        let mut point = p1;
+        point.l = 0.0;
+        point
+    } else {
+        Oklab {
+            l: 0.0,
+            a: 0.0,
+            b: 0.0,
+        }
+    };
+
     let control_point = p1;
 
     desired_l_values

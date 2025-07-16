@@ -82,27 +82,27 @@ impl From<&Color> for Oklch {
 impl Neutrals {
     pub fn from_color_hue_adjusted(color: &Color) -> Self {
         Self {
-            darkest: color.at_hue_adjusted_lightness(0.15),
-            darker: color.at_hue_adjusted_lightness(0.20),
-            dark: color.at_hue_adjusted_lightness(0.40),
-            darkish: color.at_hue_adjusted_lightness(0.50),
-            lightish: color.at_hue_adjusted_lightness(0.60),
-            light: color.at_hue_adjusted_lightness(0.70),
-            lighter: color.at_hue_adjusted_lightness(0.90),
-            lightest: color.at_hue_adjusted_lightness(0.95),
+            darkest: color.at_hue_adjusted_lightness(0.20),
+            darker: color.at_hue_adjusted_lightness(0.25),
+            dark: color.at_hue_adjusted_lightness(0.45),
+            darkish: color.at_hue_adjusted_lightness(0.55),
+            lightish: color.at_hue_adjusted_lightness(0.62),
+            light: color.at_hue_adjusted_lightness(0.72),
+            lighter: color.at_hue_adjusted_lightness(0.92),
+            lightest: color.at_hue_adjusted_lightness(0.97),
         }
     }
 
     pub fn from_color(color: &Color) -> Self {
         Self {
-            darkest: color.at_lightness(0.15),
-            darker: color.at_lightness(0.20),
-            dark: color.at_lightness(0.40),
-            darkish: color.at_lightness(0.50),
-            lightish: color.at_lightness(0.60),
-            light: color.at_lightness(0.70),
-            lighter: color.at_lightness(0.90),
-            lightest: color.at_lightness(0.95),
+            darkest: color.at_lightness(0.20),
+            darker: color.at_lightness(0.25),
+            dark: color.at_lightness(0.45),
+            darkish: color.at_lightness(0.55),
+            lightish: color.at_lightness(0.62),
+            light: color.at_lightness(0.72),
+            lighter: color.at_lightness(0.92),
+            lightest: color.at_lightness(0.97),
         }
     }
 }

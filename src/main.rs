@@ -4,14 +4,14 @@ use ratatui::{
     DefaultTerminal,
     buffer::Buffer,
     crossterm::event::{self, Event, KeyCode, KeyEventKind},
-    layout::{Constraint, Layout, Position, Rect},
-    style::Color,
+    layout::{Constraint, Flex, Layout, Rect},
+    style::{Color, Stylize},
     text::Text,
-    widgets::Widget,
+    widgets::{Block, Paragraph, Widget},
 };
 
 fn test_neutrals() -> (cate::Neutrals, cate::Neutrals) {
-    let color = cate::Color::from_hex("F3F1E3".into());
+    let color = cate::Color::from_hex("E1E7D4".into());
     (
         cate::Neutrals::from_color_hue_adjusted(&color),
         cate::Neutrals::from_color(&color),
@@ -35,12 +35,7 @@ struct App {
 ///
 /// This widget is animated and will change colors over time.
 #[derive(Debug, Default)]
-struct ColorsWidget {
-    /// The colors to render - should be double the height of the area as we render two rows of
-    /// pixels for each row of the widget using the half block character. This is computed any time
-    /// the size of the widget changes.
-    colors: Vec<Vec<Color>>,
-}
+struct ColorsWidget {}
 
 impl App {
     /// Run the app.
@@ -88,6 +83,10 @@ impl Widget for &mut App {
         let [top, colors] = Layout::vertical([Length(1), Min(0)]).areas(area);
         let [title] = Layout::horizontal([Min(0)]).areas(top);
         Text::from("Press q to quit").centered().render(title, buf);
+        let [colors] = Layout::horizontal([Min(0)])
+            .flex(Flex::Center)
+            .areas(colors);
+
         self.colors_widget.render(colors, buf);
     }
 }
@@ -97,78 +96,43 @@ impl Widget for &mut App {
 /// This is implemented on a mutable reference so that we can update the frame count and store a
 /// cached version of the colors to render instead of recalculating them every frame.
 impl Widget for &mut ColorsWidget {
-    /// Render the widget
     fn render(self, area: Rect, buf: &mut Buffer) {
-        self.setup_colors(area);
-        let colors = &self.colors;
-        for (xi, x) in (area.left()..area.right()).enumerate() {
-            // animate the colors by shifting the x index by the frame number
-            let xi = xi % (area.width as usize);
-            for (yi, y) in (area.top()..area.bottom()).enumerate() {
-                // render a half block character for each row of pixels with the foreground color
-                // set to the color of the pixel and the background color set to the color of the
-                // pixel below it
-                let fg = colors[yi * 2][xi];
-                let bg = colors[yi * 2 + 1][xi];
-                buf[Position::new(x, y)].set_char('▀').set_fg(fg).set_bg(bg);
-            }
-        }
-    }
-}
+        let cols = 8;
+        let rows = 2;
 
-impl ColorsWidget {
-    /// Setup the colors to render.
-    ///
-    /// This is called once per frame to setup the colors to render. It caches the colors so that
-    /// they don't need to be recalculated every frame.
-    #[allow(clippy::cast_precision_loss)]
-    fn setup_colors(&mut self, size: Rect) {
-        let Rect { width, height, .. } = size;
+        let col_constraints = (0..cols).map(|_| Constraint::Min(9));
+        let row_constraints = (0..rows).map(|_| Constraint::Min(3));
+        let horizontal = Layout::horizontal(col_constraints).spacing(1);
+        let vertical = Layout::vertical(row_constraints).spacing(1);
 
-        // double the height because each screen row has two rows of half block pixels
-        let height = height as usize * 2;
-        let width = width as usize;
-
-        // only update the colors if the size has changed since the last time we rendered
-        if self.colors.len() == height && self.colors[0].len() == width {
-            return;
-        }
+        let rows = vertical.split(area);
+        let cells = rows.iter().flat_map(|&row| horizontal.split(row).to_vec());
 
         // Generate the vector test colors.
         let (neutrals_a, neutrals_b) = test_neutrals();
         let neutrals_a = neutrals_a.into_iter().collect::<Vec<_>>();
         let neutrals_b = neutrals_b.into_iter().collect::<Vec<_>>();
 
-        // We'll render the same colors on each line (for now),
-        // evenly distributing them across the width of the frame.
-        let chunks = neutrals_a.len();
-        let chunk_size = width / chunks;
-        let mut row_a = Vec::with_capacity(width);
-        let mut row_b = Vec::with_capacity(width);
-        let mut row_c = Vec::with_capacity(width);
-        for x in 0..width {
-            let neutral_index = (x / chunk_size).min(neutrals_a.len() - 1);
+        for (i, cell) in cells.enumerate() {
+            let colors = if i < 8 { &neutrals_a } else { &neutrals_b };
 
-            let (r, g, b) = neutrals_a[neutral_index].to_rgb();
-            let color = Color::Rgb(r, g, b);
-            row_a.push(color);
-
-            let (r, g, b) = neutrals_b[neutral_index].to_rgb();
-            let color = Color::Rgb(r, g, b);
-            row_b.push(color);
-
-            row_c.push(Color::Reset);
-        }
-
-        self.colors = Vec::with_capacity(height);
-        for y in 0..height {
-            if y == height / 2 {
-                self.colors.push(row_c.clone());
-            } else if y > height / 2 {
-                self.colors.push(row_b.clone());
+            let color = colors[i % 8];
+            let fg_color = if color.l >= 0.5 {
+                Color::Black
             } else {
-                self.colors.push(row_a.clone());
-            }
+                Color::White
+            };
+
+            let (r, g, b) = color.to_rgb();
+            let bg_color = Color::Rgb(r, g, b);
+
+            let hex = color.to_hex();
+
+            Paragraph::new(format!("\n  {}", hex.to_ascii_uppercase()))
+                .fg(fg_color)
+                .block(Block::new())
+                .bg(bg_color)
+                .render(cell, buf);
         }
     }
 }
