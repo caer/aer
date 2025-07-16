@@ -1,7 +1,12 @@
 use std::time::Duration;
 
 use ratatui::{
-    buffer::Buffer, crossterm::event::{self, Event, KeyCode, KeyEventKind}, layout::{Alignment, Constraint, Flex, Layout, Rect}, style::{Color, Style, Stylize}, widgets::{Block, Paragraph, Widget}, DefaultTerminal
+    DefaultTerminal,
+    buffer::Buffer,
+    crossterm::event::{self, Event, KeyCode, KeyEventKind},
+    layout::{Alignment, Constraint, Flex, Layout, Rect},
+    style::{Color, Style, Stylize},
+    widgets::{Block, Paragraph, Widget},
 };
 use tui_textarea::TextArea;
 
@@ -44,7 +49,7 @@ impl<'a> App<'a> {
             .set_alignment(Alignment::Center);
         self.colors_widget
             .text_area
-            .set_placeholder_text(format!("{DEFAULT_NEUTRAL_COLOR} (q to quit, up/down to adjust hue, left/right to adjust chroma)"));
+            .set_placeholder_text(format!("{DEFAULT_NEUTRAL_COLOR} (q to quit, up/down to adjust chroma, left/right to adjust hue)"));
 
         loop {
             terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
@@ -72,14 +77,18 @@ impl<'a> App<'a> {
                 }
 
                 // Handle input events for the neutral color.
-                if key.kind == KeyEventKind::Press && key.code == KeyCode::Up {
-                    self.colors_widget.neutral_color.h = (self.colors_widget.neutral_color.h + 5.0) % 360.0;
-                } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Down {
-                    self.colors_widget.neutral_color.h = (self.colors_widget.neutral_color.h - 5.0).max(0.0);
-                } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Right {
-                    self.colors_widget.neutral_color.c = (self.colors_widget.neutral_color.c + 0.05).min(0.4);
+                if key.kind == KeyEventKind::Press && key.code == KeyCode::Right {
+                    self.colors_widget.neutral_color.h =
+                        (self.colors_widget.neutral_color.h + 2.5).max(360.0);
                 } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Left {
-                    self.colors_widget.neutral_color.c = (self.colors_widget.neutral_color.c - 0.05).max(0.0);
+                    self.colors_widget.neutral_color.h =
+                        (self.colors_widget.neutral_color.h - 2.5).max(0.0);
+                } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Up {
+                    self.colors_widget.neutral_color.c =
+                        (self.colors_widget.neutral_color.c + 0.025).min(0.4);
+                } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Down {
+                    self.colors_widget.neutral_color.c =
+                        (self.colors_widget.neutral_color.c - 0.025).max(0.0);
                 } else if self.colors_widget.text_area.input(key) {
                     if let Ok(color) = cate::Color::try_from_hex(
                         self.colors_widget.text_area.lines()[0].clone().into(),
@@ -152,9 +161,30 @@ impl<'a> Widget for &mut ColorsWidget<'a> {
             let (r, g, b) = color.to_rgb();
             let bg_color = Color::Rgb(r, g, b);
 
-            let hex = color.to_hex();
+            let mut paragraph = String::default();
 
-            Paragraph::new(format!("\n  {}", hex.to_ascii_uppercase()))
+            // Draw hex code to wide cells.
+            if cell.width >= 11 {
+                let hex = color.to_hex().to_ascii_uppercase();
+                paragraph.push_str(&format!("\n  {hex}"));
+            }
+
+            // Draw LCH values to tall cells.
+            if cell.height >= 7 && cell.width >= 12 {
+                for _ in 0..(cell.height - 6) {
+                    paragraph.push('\n');
+                }
+
+                let l = format!("{:.2}", color.l);
+                let c = format!("{:.2}", color.c);
+                let h = format!("{:.2}", color.h);
+
+                paragraph.push_str(&format!("\n  L {l}"));
+                paragraph.push_str(&format!("\n  C {c}"));
+                paragraph.push_str(&format!("\n  H {h}"));
+            }
+
+            Paragraph::new(paragraph)
                 .fg(fg_color)
                 .block(Block::new())
                 .bg(bg_color)
