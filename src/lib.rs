@@ -11,12 +11,12 @@ export_coda!("src/coda.md");
 impl Color {
     /// Return a color decoded from a hexadecimal
     /// string containing a non-linear sRGB color.
-    pub fn from_hex(hex: Text) -> Self {
-        let srgb: Srgb<u8> = hex.parse().unwrap();
+    pub fn try_from_hex(hex: Text) -> Result<Self, Error> {
+        let srgb: Srgb<u8> = hex.parse().map_err(|_| Error::InvalidColor)?;
         let srgb = srgb.into_linear();
         let oklch: Oklch = srgb.into_color();
 
-        oklch.into()
+        Ok(oklch.into())
     }
 
     /// Returns a hexadecimal string containing
@@ -126,4 +126,9 @@ impl<'a> IntoIterator for &'a Neutrals {
         ]
         .into_iter()
     }
+}
+
+#[derive(Debug)]
+pub enum Error {
+    InvalidColor,
 }

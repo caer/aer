@@ -1,22 +1,11 @@
 use std::time::Duration;
 
 use ratatui::{
-    DefaultTerminal,
-    buffer::Buffer,
-    crossterm::event::{self, Event, KeyCode, KeyEventKind},
-    layout::{Constraint, Flex, Layout, Rect},
-    style::{Color, Stylize},
-    text::Text,
-    widgets::{Block, Paragraph, Widget},
+    buffer::Buffer, crossterm::event::{self, Event, KeyCode, KeyEventKind}, layout::{Alignment, Constraint, Flex, Layout, Rect}, style::{Color, Style, Stylize}, widgets::{Block, Paragraph, Widget}, DefaultTerminal
 };
+use tui_textarea::TextArea;
 
-fn test_neutrals() -> (cate::Neutrals, cate::Neutrals) {
-    let color = cate::Color::from_hex("E1E7D4".into());
-    (
-        cate::Neutrals::from_color_hue_adjusted(&color),
-        cate::Neutrals::from_color(&color),
-    )
-}
+const DEFAULT_NEUTRAL_COLOR: &str = "E1E7D4";
 
 fn main() -> std::io::Result<()> {
     let terminal = ratatui::init();
@@ -26,22 +15,37 @@ fn main() -> std::io::Result<()> {
 }
 
 #[derive(Debug, Default)]
-struct App {
+struct App<'a> {
     /// A widget that displays the full range of RGB colors that can be displayed in the terminal.
-    colors_widget: ColorsWidget,
+    colors_widget: ColorsWidget<'a>,
 }
 
 /// A widget that displays the full range of RGB colors that can be displayed in the terminal.
 ///
 /// This widget is animated and will change colors over time.
 #[derive(Debug, Default)]
-struct ColorsWidget {}
+struct ColorsWidget<'a> {
+    neutral_color: cate::Color,
+    text_area: TextArea<'a>,
+}
 
-impl App {
+impl<'a> App<'a> {
     /// Run the app.
     ///
     /// This is the main event loop for the app.
     pub fn run(mut self, mut terminal: DefaultTerminal) -> std::io::Result<()> {
+        self.colors_widget.neutral_color =
+            cate::Color::try_from_hex(DEFAULT_NEUTRAL_COLOR.into()).unwrap();
+        self.colors_widget
+            .text_area
+            .set_cursor_line_style(Style::default());
+        self.colors_widget
+            .text_area
+            .set_alignment(Alignment::Center);
+        self.colors_widget
+            .text_area
+            .set_placeholder_text(format!("{DEFAULT_NEUTRAL_COLOR} (q to quit, up/down to adjust hue, left/right to adjust chroma)"));
+
         loop {
             terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
 
@@ -65,7 +69,24 @@ impl App {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('q') {
                     return Ok(false);
-                };
+                }
+
+                // Handle input events for the neutral color.
+                if key.kind == KeyEventKind::Press && key.code == KeyCode::Up {
+                    self.colors_widget.neutral_color.h = (self.colors_widget.neutral_color.h + 5.0) % 360.0;
+                } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Down {
+                    self.colors_widget.neutral_color.h = (self.colors_widget.neutral_color.h - 5.0).max(0.0);
+                } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Right {
+                    self.colors_widget.neutral_color.c = (self.colors_widget.neutral_color.c + 0.05).min(0.4);
+                } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Left {
+                    self.colors_widget.neutral_color.c = (self.colors_widget.neutral_color.c - 0.05).max(0.0);
+                } else if self.colors_widget.text_area.input(key) {
+                    if let Ok(color) = cate::Color::try_from_hex(
+                        self.colors_widget.text_area.lines()[0].clone().into(),
+                    ) {
+                        self.colors_widget.neutral_color = color;
+                    }
+                }
             }
         }
 
@@ -77,12 +98,16 @@ impl App {
 ///
 /// This is implemented on a mutable reference so that the app can update its state while it is
 /// being rendered.
-impl Widget for &mut App {
+impl<'a> Widget for &mut App<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         use Constraint::{Length, Min};
         let [top, colors] = Layout::vertical([Length(1), Min(0)]).areas(area);
         let [title] = Layout::horizontal([Min(0)]).areas(top);
-        Text::from("Press q to quit").centered().render(title, buf);
+
+        self.colors_widget.text_area.render(title, buf);
+
+        // Text::from("Press q to quit").centered().render(title, buf);
+
         let [colors] = Layout::horizontal([Min(0)])
             .flex(Flex::Center)
             .areas(colors);
@@ -95,7 +120,7 @@ impl Widget for &mut App {
 ///
 /// This is implemented on a mutable reference so that we can update the frame count and store a
 /// cached version of the colors to render instead of recalculating them every frame.
-impl Widget for &mut ColorsWidget {
+impl<'a> Widget for &mut ColorsWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let cols = 8;
         let rows = 2;
@@ -109,7 +134,8 @@ impl Widget for &mut ColorsWidget {
         let cells = rows.iter().flat_map(|&row| horizontal.split(row).to_vec());
 
         // Generate the vector test colors.
-        let (neutrals_a, neutrals_b) = test_neutrals();
+        let neutrals_a = cate::Neutrals::from_color_hue_adjusted(&self.neutral_color);
+        let neutrals_b = cate::Neutrals::from_color(&self.neutral_color);
         let neutrals_a = neutrals_a.into_iter().collect::<Vec<_>>();
         let neutrals_b = neutrals_b.into_iter().collect::<Vec<_>>();
 
