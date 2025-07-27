@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use arboard::Clipboard;
 use ratatui::{
     DefaultTerminal,
     buffer::Buffer,
@@ -34,7 +35,7 @@ struct ColorsWidget<'a> {
     text_area: TextArea<'a>,
 }
 
-impl<'a> App<'a> {
+impl App<'_> {
     /// Run the app.
     ///
     /// This is the main event loop for the app.
@@ -72,17 +73,47 @@ impl<'a> App<'a> {
         let timeout = Duration::from_secs_f32(1.0 / 60.0);
         if event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
+
+                // Exit the application.
                 if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('q') {
                     return Ok(false);
+                }
+                
+                // Copy the current neutral colors to the keyboard as SCSS RGBA colors.
+                if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('w') {
+                    let neutrals =
+                        cate::Neutrals::from_color_hue_adjusted(&self.colors_widget.neutral_color);
+                    let colors = format!(
+                        r#"$c-lightest: rgba({}, 1);
+$c-lighter:  rgba({}, 1);
+$c-light:    rgba({}, 1);
+$c-darkish:  rgba({}, 1);
+$c-lightish: rgba({}, 1);
+$c-dark:     rgba({}, 1);
+$c-darker:   rgba({}, 1);
+$c-darkest:  rgba({}, 1);"#,
+                        neutrals.lightest,
+                        neutrals.lighter,
+                        neutrals.light,
+                        neutrals.lightish,
+                        neutrals.darkish,
+                        neutrals.dark,
+                        neutrals.darker,
+                        neutrals.darkest
+                    );
+
+                    let mut clipboard = Clipboard::new().unwrap();
+                    clipboard.set_text(colors).unwrap();
+                    return Ok(true);
                 }
 
                 // Handle input events for the neutral color.
                 if key.kind == KeyEventKind::Press && key.code == KeyCode::Right {
                     self.colors_widget.neutral_color.h =
-                        (self.colors_widget.neutral_color.h + 2.5).max(360.0);
+                        (self.colors_widget.neutral_color.h + 2.5) % 360.0;
                 } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Left {
                     self.colors_widget.neutral_color.h =
-                        (self.colors_widget.neutral_color.h - 2.5).max(0.0);
+                        (self.colors_widget.neutral_color.h - 2.5) % 360.0;
                 } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Up {
                     self.colors_widget.neutral_color.c =
                         (self.colors_widget.neutral_color.c + 0.025).min(0.4);
@@ -107,7 +138,7 @@ impl<'a> App<'a> {
 ///
 /// This is implemented on a mutable reference so that the app can update its state while it is
 /// being rendered.
-impl<'a> Widget for &mut App<'a> {
+impl Widget for &mut App<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         use Constraint::{Length, Min};
         let [top, colors] = Layout::vertical([Length(1), Min(0)]).areas(area);
@@ -129,7 +160,7 @@ impl<'a> Widget for &mut App<'a> {
 ///
 /// This is implemented on a mutable reference so that we can update the frame count and store a
 /// cached version of the colors to render instead of recalculating them every frame.
-impl<'a> Widget for &mut ColorsWidget<'a> {
+impl Widget for &mut ColorsWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let cols = 8;
         let rows = 2;
@@ -144,7 +175,9 @@ impl<'a> Widget for &mut ColorsWidget<'a> {
 
         // Generate the vector test colors.
         let neutrals_a = cate::Neutrals::from_color_hue_adjusted(&self.neutral_color);
-        let neutrals_b = cate::Neutrals::from_color(&self.neutral_color);
+        let mut neutral_color_b = self.neutral_color.clone();
+        neutral_color_b.h = (neutral_color_b.h + 90.0) % 360.0;
+        let neutrals_b = cate::Neutrals::from_color_hue_adjusted(&neutral_color_b);
         let neutrals_a = neutrals_a.into_iter().collect::<Vec<_>>();
         let neutrals_b = neutrals_b.into_iter().collect::<Vec<_>>();
 
@@ -171,7 +204,10 @@ impl<'a> Widget for &mut ColorsWidget<'a> {
 
             // Draw LCH values to tall cells.
             if cell.height >= 7 && cell.width >= 12 {
-                for _ in 0..(cell.height - 6) {
+                let bottom_padding = 3;
+                let bottom_lines = 3;
+
+                for _ in 0..(cell.height - (bottom_padding + bottom_lines)) {
                     paragraph.push('\n');
                 }
 

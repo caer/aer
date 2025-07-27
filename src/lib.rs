@@ -52,14 +52,11 @@ impl Color {
 
         sampled_oklch.into()
     }
+}
 
-    /// Returns a copy of this color with the given `lightness` value.
-    pub fn at_lightness(&self, lightness: f32) -> Self {
-        assert!((0.0..=1.0).contains(&lightness));
-        Self {
-            l: lightness,
-            ..self.clone()
-        }
+impl alloc::fmt::Display for Color {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_hex().to_uppercase())
     }
 }
 
@@ -90,19 +87,6 @@ impl Neutrals {
             light: color.at_hue_adjusted_lightness(0.72),
             lighter: color.at_hue_adjusted_lightness(0.92),
             lightest: color.at_hue_adjusted_lightness(0.97),
-        }
-    }
-
-    pub fn from_color(color: &Color) -> Self {
-        Self {
-            darkest: color.at_lightness(0.20),
-            darker: color.at_lightness(0.25),
-            dark: color.at_lightness(0.45),
-            darkish: color.at_lightness(0.55),
-            lightish: color.at_lightness(0.62),
-            light: color.at_lightness(0.72),
-            lighter: color.at_lightness(0.92),
-            lightest: color.at_lightness(0.97),
         }
     }
 }
