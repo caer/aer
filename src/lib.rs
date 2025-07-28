@@ -47,7 +47,7 @@ impl Color {
         let oklch: Oklch = self.into();
         let oklab: Oklab = oklch.into_color();
 
-        let sampled_color = curve::generate_oklab_samples(oklab, &[lightness])[0];
+        let sampled_color = curve::sample_quadratic_bezier_oklab_curve(oklab, &[lightness])[0];
         let sampled_oklch: Oklch = sampled_color.into_color();
 
         sampled_oklch.into()

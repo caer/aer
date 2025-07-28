@@ -73,12 +73,11 @@ impl App<'_> {
         let timeout = Duration::from_secs_f32(1.0 / 60.0);
         if event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
-
                 // Exit the application.
                 if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('q') {
                     return Ok(false);
                 }
-                
+
                 // Copy the current neutral colors to the keyboard as SCSS RGBA colors.
                 if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('w') {
                     let neutrals =
