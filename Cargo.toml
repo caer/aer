@@ -11,9 +11,11 @@ authors = [
 ]
 
 [dependencies]
+arboard = "3.6.0"
 codas = "0.5.1"
 codas-macros = "0.5.1"
 # Colorspaces.
 palette = "0.7.6"
 # Terminal rendering.
 ratatui = "0.29.0"
+tui-textarea = "0.7.0"
