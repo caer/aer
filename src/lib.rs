@@ -90,14 +90,39 @@ impl From<&Color> for Oklch {
 impl Neutrals {
     pub fn from_color_hue_adjusted(color: &Color) -> Self {
         Self {
-            darkest: color.at_hue_adjusted_lightness(0.20),
-            darker: color.at_hue_adjusted_lightness(0.25),
-            dark: color.at_hue_adjusted_lightness(0.45),
-            darkish: color.at_hue_adjusted_lightness(0.55),
-            lightish: color.at_hue_adjusted_lightness(0.62),
-            light: color.at_hue_adjusted_lightness(0.72),
+            // darkest: color.at_hue_adjusted_lightness(0.20),
+            // darker: color.at_hue_adjusted_lightness(0.25),
+            // dark: color.at_hue_adjusted_lightness(0.45),
+            // darkish: color.at_hue_adjusted_lightness(0.55),
+            // lightish: color.at_hue_adjusted_lightness(0.62),
+            // light: color.at_hue_adjusted_lightness(0.72),
+            // lighter: color.at_hue_adjusted_lightness(0.92),
+            // lightest: color.at_hue_adjusted_lightness(0.97),
+            darkest: color.at_hue_adjusted_lightness(0.19),
+            darker: color.at_hue_adjusted_lightness(0.24),
+
+            dark: color.at_hue_adjusted_lightness(0.41),
+
+            darkish: color.at_hue_adjusted_lightness(0.58),
+            lightish: color.at_hue_adjusted_lightness(0.58),
+
+            light: color.at_hue_adjusted_lightness(0.75),
+
             lighter: color.at_hue_adjusted_lightness(0.92),
             lightest: color.at_hue_adjusted_lightness(0.97),
+        }
+    }
+
+    pub fn to_cmyk_adjusted(self) -> Self {
+        Self {
+            darkest: crate::cmyk::from_cmyk(&crate::cmyk::to_cmyk(&self.darkest)),
+            darker: crate::cmyk::from_cmyk(&crate::cmyk::to_cmyk(&self.darker)),
+            dark: crate::cmyk::from_cmyk(&crate::cmyk::to_cmyk(&self.dark)),
+            darkish: crate::cmyk::from_cmyk(&crate::cmyk::to_cmyk(&self.darkish)),
+            lightish: crate::cmyk::from_cmyk(&crate::cmyk::to_cmyk(&self.lightish)),
+            light: crate::cmyk::from_cmyk(&crate::cmyk::to_cmyk(&self.light)),
+            lighter: crate::cmyk::from_cmyk(&crate::cmyk::to_cmyk(&self.lighter)),
+            lightest: crate::cmyk::from_cmyk(&crate::cmyk::to_cmyk(&self.lightest)),
         }
     }
 }

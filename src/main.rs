@@ -7,11 +7,15 @@ use ratatui::{
     crossterm::event::{self, Event, KeyCode, KeyEventKind},
     layout::{Alignment, Constraint, Flex, Layout, Rect},
     style::{Color, Style, Stylize},
+    text::Text,
     widgets::{Block, Paragraph, Widget},
 };
 use tui_textarea::TextArea;
 
-const DEFAULT_NEUTRAL_COLOR: &str = "E1E7D4";
+const DEFAULT_NEUTRAL_COLOR: &str = "E6E4C8";
+
+const CHROMA_STEP: f32 = 0.005;
+const MAX_CHROMA: f32 = 1.0;
 
 fn main() -> std::io::Result<()> {
     let terminal = ratatui::init();
@@ -32,7 +36,8 @@ struct App<'a> {
 #[derive(Debug, Default)]
 struct ColorsWidget<'a> {
     neutral_color: cate::Color,
-    text_area: TextArea<'a>,
+    base_color_input: TextArea<'a>,
+    cmyk_gamut_fitting: bool,
 }
 
 impl App<'_> {
@@ -43,14 +48,16 @@ impl App<'_> {
         self.colors_widget.neutral_color =
             cate::Color::try_from_hex(DEFAULT_NEUTRAL_COLOR.into()).unwrap();
         self.colors_widget
-            .text_area
+            .base_color_input
             .set_cursor_line_style(Style::default());
         self.colors_widget
-            .text_area
+            .base_color_input
             .set_alignment(Alignment::Center);
         self.colors_widget
-            .text_area
-            .set_placeholder_text(format!("{DEFAULT_NEUTRAL_COLOR} (q to quit, up/down to adjust chroma, left/right to adjust hue)"));
+            .base_color_input
+            .set_placeholder_text(format!(
+                "{DEFAULT_NEUTRAL_COLOR} (enter a HEX color to change the base color)"
+            ));
 
         loop {
             terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
@@ -78,27 +85,56 @@ impl App<'_> {
                     return Ok(false);
                 }
 
+                // Toggle CMYK color gamut fitting.
+                if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('g') {
+                    self.colors_widget.cmyk_gamut_fitting = !self.colors_widget.cmyk_gamut_fitting;
+                    return Ok(true);
+                }
+
                 // Copy the current neutral colors to the keyboard as SCSS RGBA colors.
                 if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('w') {
-                    let neutrals =
+                    let mut neutrals =
                         cate::Neutrals::from_color_hue_adjusted(&self.colors_widget.neutral_color);
+
+                    let mut base_color_str = format!(
+                        "{} (sRGB HEX) | oklch({:.2} {:.3} {:.2})",
+                        &self.colors_widget.neutral_color,
+                        self.colors_widget.neutral_color.l,
+                        self.colors_widget.neutral_color.c,
+                        self.colors_widget.neutral_color.h,
+                    );
+
+                    if self.colors_widget.cmyk_gamut_fitting {
+                        neutrals = neutrals.to_cmyk_adjusted();
+                        base_color_str.push_str(" | Fitted to CMYK Gamut");
+                    }
+
                     let colors = format!(
-                        r#"$c-lightest: rgba({}, 1);
-$c-lighter:  rgba({}, 1);
-$c-light:    rgba({}, 1);
-$c-darkish:  rgba({}, 1);
-$c-lightish: rgba({}, 1);
-$c-dark:     rgba({}, 1);
-$c-darker:   rgba({}, 1);
-$c-darkest:  rgba({}, 1);"#,
+                        r#"// {base_color_str}
+$c-lightest: rgba({}, 1); // L={:.2}
+$c-lighter:  rgba({}, 1); // L={:.2}
+$c-light:    rgba({}, 1); // L={:.2}
+$c-darkish:  rgba({}, 1); // L={:.2}
+$c-lightish: rgba({}, 1); // L={:.2}
+$c-dark:     rgba({}, 1); // L={:.2}
+$c-darker:   rgba({}, 1); // L={:.2}
+$c-darkest:  rgba({}, 1); // L={:.2}"#,
                         neutrals.lightest,
+                        neutrals.lightest.l,
                         neutrals.lighter,
+                        neutrals.lighter.l,
                         neutrals.light,
+                        neutrals.light.l,
                         neutrals.lightish,
+                        neutrals.lightish.l,
                         neutrals.darkish,
+                        neutrals.darkish.l,
                         neutrals.dark,
+                        neutrals.dark.l,
                         neutrals.darker,
-                        neutrals.darkest
+                        neutrals.darker.l,
+                        neutrals.darkest,
+                        neutrals.darkest.l,
                     );
 
                     let mut clipboard = Clipboard::new().unwrap();
@@ -115,13 +151,15 @@ $c-darkest:  rgba({}, 1);"#,
                         (self.colors_widget.neutral_color.h - 1.0) % 360.0;
                 } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Up {
                     self.colors_widget.neutral_color.c =
-                        (self.colors_widget.neutral_color.c + 0.01).min(0.4);
+                        (self.colors_widget.neutral_color.c + CHROMA_STEP).min(MAX_CHROMA);
                 } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Down {
                     self.colors_widget.neutral_color.c =
-                        (self.colors_widget.neutral_color.c - 0.01).max(0.0);
-                } else if self.colors_widget.text_area.input(key) {
+                        (self.colors_widget.neutral_color.c - CHROMA_STEP).max(0.0);
+                } else if self.colors_widget.base_color_input.input(key) {
                     if let Ok(color) = cate::Color::try_from_hex(
-                        self.colors_widget.text_area.lines()[0].clone().into(),
+                        self.colors_widget.base_color_input.lines()[0]
+                            .clone()
+                            .into(),
                     ) {
                         self.colors_widget.neutral_color = color;
                     }
@@ -140,12 +178,24 @@ $c-darkest:  rgba({}, 1);"#,
 impl Widget for &mut App<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         use Constraint::{Length, Min};
-        let [top, colors] = Layout::vertical([Length(1), Min(0)]).areas(area);
-        let [title] = Layout::horizontal([Min(0)]).areas(top);
+        let [top, colors, bottom] = Layout::vertical([Length(1), Min(0), Length(1)]).areas(area);
+        let [color_input_area] = Layout::horizontal([Min(0)]).areas(top);
+        let [instructions_area] = Layout::horizontal([Min(0)]).areas(bottom);
 
-        self.colors_widget.text_area.render(title, buf);
+        self.colors_widget
+            .base_color_input
+            .render(color_input_area, buf);
 
-        // Text::from("Press q to quit").centered().render(title, buf);
+        let base_chroma = format!("{:0.3}", self.colors_widget.neutral_color.c);
+        let base_hue: String = format!("{:0.2}", self.colors_widget.neutral_color.h);
+
+        let g_label = if self.colors_widget.cmyk_gamut_fitting {
+            "Disable"
+        } else {
+            "Enable"
+        };
+
+        Text::from(format!("Q: Quit | ↑↓: Chroma ({base_chroma}) | ←→: Hue ({base_hue}) | G: {g_label} CMYK Gamut Fitting | W: Copy SCSS")).centered().render(instructions_area, buf);
 
         let [colors] = Layout::horizontal([Min(0)])
             .flex(Flex::Center)
@@ -173,10 +223,16 @@ impl Widget for &mut ColorsWidget<'_> {
         let cells = rows.iter().flat_map(|&row| horizontal.split(row).to_vec());
 
         // Generate the vector test colors.
-        let neutrals_a = cate::Neutrals::from_color_hue_adjusted(&self.neutral_color);
+        let mut neutrals_a = cate::Neutrals::from_color_hue_adjusted(&self.neutral_color);
         let mut neutral_color_b = self.neutral_color.clone();
         neutral_color_b.h = (neutral_color_b.h + 90.0) % 360.0;
-        let neutrals_b = cate::Neutrals::from_color_hue_adjusted(&neutral_color_b);
+        let mut neutrals_b = cate::Neutrals::from_color_hue_adjusted(&neutral_color_b);
+
+        if self.cmyk_gamut_fitting {
+            neutrals_a = neutrals_a.to_cmyk_adjusted();
+            neutrals_b = neutrals_b.to_cmyk_adjusted();
+        }
+
         let neutrals_a = neutrals_a.into_iter().collect::<Vec<_>>();
         let neutrals_b = neutrals_b.into_iter().collect::<Vec<_>>();
 
@@ -211,7 +267,7 @@ impl Widget for &mut ColorsWidget<'_> {
                 }
 
                 let l = format!("{:.2}", color.l);
-                let c = format!("{:.2}", color.c);
+                let c = format!("{:.3}", color.c);
                 let h = format!("{:.2}", color.h);
 
                 paragraph.push_str(&format!("\n  L {l}"));
