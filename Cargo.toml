@@ -11,10 +11,14 @@ authors = [
 ]
 
 [dependencies]
+# Clipboard
 arboard = "3.6.0"
+# Data types
 codas = "0.5.1"
 codas-macros = "0.5.1"
-# Colorspaces.
+# ICC color profiles
+moxcms = "0.7.2"
+# Colorspaces
 palette = "0.7.6"
 # Terminal rendering.
 ratatui = "0.29.0"
