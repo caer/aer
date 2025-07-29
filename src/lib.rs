@@ -2,8 +2,9 @@ extern crate alloc;
 
 use codas::types::Text;
 use codas_macros::export_coda;
-use palette::{IntoColor, Oklab, Oklch, Srgb};
+use palette::{FromColor, IntoColor, Oklab, Oklch, Srgb};
 
+pub mod cmyk;
 pub mod curve;
 
 export_coda!("src/coda.md");
@@ -19,6 +20,15 @@ impl Color {
         Ok(oklch.into())
     }
 
+    /// Return a color decoded from an `[r, g, b]`
+    /// array of non-linear sRGB color channels
+    /// with a `0.0` to `1.0` range.
+    pub fn from_srgb(srgb: [f32; 3]) -> Self {
+        let srgb = Srgb::<f32>::from_components((srgb[0], srgb[1], srgb[2]));
+        let oklch = Oklch::from_color(srgb);
+        oklch.into()
+    }
+
     /// Returns a hexadecimal string containing
     /// the non-linear sRGB encoding of this color.
     pub fn to_hex(&self) -> Text {
@@ -27,12 +37,13 @@ impl Color {
         format!("#{srgb:x}").into()
     }
 
-    /// Returns a tuple of the `(r, g, b)` values
-    /// of the non-linear sRGB encoding of this color.
-    pub fn to_rgb(&self) -> (u8, u8, u8) {
+    /// Return an `[r, g, b]` array of non-linear
+    /// sRGB color channels with a `0.0` to `1.0` range
+    /// representing this color.
+    pub fn to_srgb(&self) -> [f32; 3] {
         let oklch = Oklch::from(self);
-        let srgb = Srgb::<u8>::from_linear(oklch.into_color());
-        (srgb.red, srgb.green, srgb.blue)
+        let srgb = Srgb::<f32>::from_color(oklch);
+        [srgb.red, srgb.green, srgb.blue]
     }
 
     /// Returns a copy of this color with the given

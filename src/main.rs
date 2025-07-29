@@ -109,16 +109,16 @@ $c-darkest:  rgba({}, 1);"#,
                 // Handle input events for the neutral color.
                 if key.kind == KeyEventKind::Press && key.code == KeyCode::Right {
                     self.colors_widget.neutral_color.h =
-                        (self.colors_widget.neutral_color.h + 2.5) % 360.0;
+                        (self.colors_widget.neutral_color.h + 1.0) % 360.0;
                 } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Left {
                     self.colors_widget.neutral_color.h =
-                        (self.colors_widget.neutral_color.h - 2.5) % 360.0;
+                        (self.colors_widget.neutral_color.h - 1.0) % 360.0;
                 } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Up {
                     self.colors_widget.neutral_color.c =
-                        (self.colors_widget.neutral_color.c + 0.025).min(0.4);
+                        (self.colors_widget.neutral_color.c + 0.01).min(0.4);
                 } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Down {
                     self.colors_widget.neutral_color.c =
-                        (self.colors_widget.neutral_color.c - 0.025).max(0.0);
+                        (self.colors_widget.neutral_color.c - 0.01).max(0.0);
                 } else if self.colors_widget.text_area.input(key) {
                     if let Ok(color) = cate::Color::try_from_hex(
                         self.colors_widget.text_area.lines()[0].clone().into(),
@@ -190,8 +190,8 @@ impl Widget for &mut ColorsWidget<'_> {
                 Color::White
             };
 
-            let (r, g, b) = color.to_rgb();
-            let bg_color = Color::Rgb(r, g, b);
+            let [r, g, b] = color.to_srgb();
+            let bg_color = Color::Rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8);
 
             let mut paragraph = String::default();
 
