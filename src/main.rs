@@ -12,10 +12,15 @@ use ratatui::{
 };
 use tui_textarea::TextArea;
 
-const DEFAULT_NEUTRAL_COLOR: &str = "E6E4C8";
+/// The default neutral color loaded on application start.
+const DEFAULT_NEUTRAL_COLOR: &str = "E9E2D0";
 
+/// The amount of Chroma to add or remove when
+/// modifying Chroma is modified.
 const CHROMA_STEP: f32 = 0.005;
-const MAX_CHROMA: f32 = 1.0;
+
+/// The maximum Chroma value.
+const MAX_CHROMA: f32 = 0.4;
 
 fn main() -> std::io::Result<()> {
     let terminal = ratatui::init();
@@ -96,7 +101,7 @@ impl App<'_> {
                     let mut neutrals =
                         cate::Neutrals::from_color_hue_adjusted(&self.colors_widget.neutral_color);
 
-                    let mut base_color_str = format!(
+                    let base_color_str = format!(
                         "{} (sRGB HEX) | oklch({:.2} {:.3} {:.2})",
                         &self.colors_widget.neutral_color,
                         self.colors_widget.neutral_color.l,
@@ -104,31 +109,30 @@ impl App<'_> {
                         self.colors_widget.neutral_color.h,
                     );
 
-                    if self.colors_widget.cmyk_gamut_fitting {
+                    let gamut_str = if self.colors_widget.cmyk_gamut_fitting {
                         neutrals = neutrals.to_cmyk_adjusted();
-                        base_color_str.push_str(" | Fitted to CMYK Gamut");
-                    }
+                        "(in Coated GRACoL 2006 CMYK Gamut)"
+                    } else {
+                        "(in sRGB Gamut)"
+                    };
 
                     let colors = format!(
                         r#"// {base_color_str}
-$c-lightest: rgba({}, 1); // L={:.2}
-$c-lighter:  rgba({}, 1); // L={:.2}
-$c-light:    rgba({}, 1); // L={:.2}
-$c-darkish:  rgba({}, 1); // L={:.2}
-$c-lightish: rgba({}, 1); // L={:.2}
-$c-dark:     rgba({}, 1); // L={:.2}
-$c-darker:   rgba({}, 1); // L={:.2}
-$c-darkest:  rgba({}, 1); // L={:.2}"#,
+$c-lightest: rgba({}, 1); // L={:.2} {gamut_str}
+$c-lighter:  rgba({}, 1); // L={:.2} {gamut_str}
+$c-light:    rgba({}, 1); // L={:.2} {gamut_str}
+$c-neutral:  rgba({}, 1); // L={:.2} {gamut_str}
+$c-dark:     rgba({}, 1); // L={:.2} {gamut_str}
+$c-darker:   rgba({}, 1); // L={:.2} {gamut_str}
+$c-darkest:  rgba({}, 1); // L={:.2} {gamut_str}"#,
                         neutrals.lightest,
                         neutrals.lightest.l,
                         neutrals.lighter,
                         neutrals.lighter.l,
                         neutrals.light,
                         neutrals.light.l,
-                        neutrals.lightish,
-                        neutrals.lightish.l,
-                        neutrals.darkish,
-                        neutrals.darkish.l,
+                        neutrals.neutral,
+                        neutrals.neutral.l,
                         neutrals.dark,
                         neutrals.dark.l,
                         neutrals.darker,
@@ -211,7 +215,7 @@ impl Widget for &mut App<'_> {
 /// cached version of the colors to render instead of recalculating them every frame.
 impl Widget for &mut ColorsWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let cols = 8;
+        let cols = 7;
         let rows = 2;
 
         let col_constraints = (0..cols).map(|_| Constraint::Min(9));
@@ -237,9 +241,9 @@ impl Widget for &mut ColorsWidget<'_> {
         let neutrals_b = neutrals_b.into_iter().collect::<Vec<_>>();
 
         for (i, cell) in cells.enumerate() {
-            let colors = if i < 8 { &neutrals_a } else { &neutrals_b };
+            let colors = if i < cols { &neutrals_a } else { &neutrals_b };
 
-            let color = colors[i % 8];
+            let color = colors[i % cols];
             let fg_color = if color.l >= 0.5 {
                 Color::Black
             } else {
