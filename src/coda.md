@@ -23,19 +23,19 @@ A system of 9 base colors.
 
 This set of colors is comprised of:
 
-- One neutral `darkest` color, with an `L` value of `15`.
+- One `neutral` color, with an `L` value of `58`.
 
 - Six primary colors derived from additive (`red`, `green`, and `blue`)
   and subtractive (`cyan`, `magenta`, and `yellow`) color models, with
-  LAB lightness values of `55`.
+  LAB lightness values of `58`.
 
-- Two secondary colors (`orange` and `purple`) with LAB lightness values of `55`.
+- Two secondary colors (`orange` and `purple`) with LAB lightness values of `58`.
 
-Seven additional colors are derived from the base neutral color, and two
-additional colors are derived from each of the primary and secondary colors,
-for a total of 32 colors.
+Seven additional colors are derived from the base neutral color,
+and two additional colors are derived from each of the primary
+and secondary colors, for a total of 32 colors.
 
-+ `darkest` Color
++ `neutral` Color
 + `magenta` Color
 + `red` Color
 + `orange` Color
@@ -47,28 +47,25 @@ for a total of 32 colors.
 
 ## `Neutrals` Data
 
-The set of eight neutral colors derived from a `ColorSystem`.
+The set of seven neutral colors derived from a `ColorSystem`.
 
 + `darkest` Color
-    The base neutral, with `L=15`.
+    `L=19` (`neutral - 39`)
 
 + `darker` Color
-    `L=20`
+    `L=24` (`neutral - 34`)
 
 + `dark` Color
-    `L=40`
+    `L=41` (`neutral - 17`)
 
-+ `darkish` Color
-    `L=50`
-
-+ `lightish` Color
-    `L=60`
++ `neutral` Color
+    The base neutral, with `L=58`.
 
 + `light` Color
-    `L=70`
+    `L=75` (`neutral + 17`)
 
 + `lighter` Color
-    `L=90`
+    `L=92` (`neutral + 34`)
 
 + `lightest` Color
-    `L=96`
+    `L=97` (`neutral + 39`)
