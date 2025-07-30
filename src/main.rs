@@ -15,12 +15,19 @@ use tui_textarea::TextArea;
 /// The default neutral color loaded on application start.
 const DEFAULT_NEUTRAL_COLOR: &str = "E9E2D0";
 
-/// The amount of Chroma to add or remove when
-/// modifying Chroma is modified.
-const CHROMA_STEP: f32 = 0.005;
+/// The amount of Chroma added or removed from
+/// the neutral color during each user input.
+const NEUTRAL_CHROMA_STEP: f32 = 0.005;
 
-/// The maximum Chroma value.
-const MAX_CHROMA: f32 = 0.4;
+/// The maximum Chroma value assigned to the neutral color.
+const NEUTRAL_MAX_CHROMA: f32 = 1.0;
+
+/// The number of degrees to shift hue by between
+/// each neutral-derived accent color.
+const ACCENT_HUE_STEP: f32 = 25.0;
+
+/// The minimum Chroma value assigned to each accent color.
+const ACCENT_MIN_CHROMA: f32 = 0.05;
 
 fn main() -> std::io::Result<()> {
     let terminal = ratatui::init();
@@ -154,11 +161,12 @@ $c-darkest:  rgba({}, 1); // L={:.2} {gamut_str}"#,
                     self.colors_widget.neutral_color.h =
                         (self.colors_widget.neutral_color.h - 1.0) % 360.0;
                 } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Up {
-                    self.colors_widget.neutral_color.c =
-                        (self.colors_widget.neutral_color.c + CHROMA_STEP).min(MAX_CHROMA);
+                    self.colors_widget.neutral_color.c = (self.colors_widget.neutral_color.c
+                        + NEUTRAL_CHROMA_STEP)
+                        .min(NEUTRAL_MAX_CHROMA);
                 } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Down {
                     self.colors_widget.neutral_color.c =
-                        (self.colors_widget.neutral_color.c - CHROMA_STEP).max(0.0);
+                        (self.colors_widget.neutral_color.c - NEUTRAL_CHROMA_STEP).max(0.0);
                 } else if self.colors_widget.base_color_input.input(key) {
                     if let Ok(color) = cate::Color::try_from_hex(
                         self.colors_widget.base_color_input.lines()[0]
@@ -215,75 +223,101 @@ impl Widget for &mut App<'_> {
 /// cached version of the colors to render instead of recalculating them every frame.
 impl Widget for &mut ColorsWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let cols = 7;
-        let rows = 2;
+        // Render a column for each neutral color.
+        let neutral_colors = 7;
+        let col_constraints = (0..neutral_colors).map(|_| Constraint::Min(9));
 
-        let col_constraints = (0..cols).map(|_| Constraint::Min(9));
-        let row_constraints = (0..rows).map(|_| Constraint::Min(3));
+        // Render two rows of colors (one for neutrals, one for accents).
+        let row_constraints = (0..2).map(|_| Constraint::Min(3));
+
+        // Split the rendered area into cells.
         let horizontal = Layout::horizontal(col_constraints).spacing(1);
         let vertical = Layout::vertical(row_constraints).spacing(1);
-
         let rows = vertical.split(area);
-        let cells = rows.iter().flat_map(|&row| horizontal.split(row).to_vec());
+        let cells = rows
+            .iter()
+            .flat_map(|&row| horizontal.split(row).to_vec())
+            .collect::<Vec<_>>();
 
-        // Generate the vector test colors.
-        let mut neutrals_a = cate::Neutrals::from_color_hue_adjusted(&self.neutral_color);
-        let mut neutral_color_b = self.neutral_color.clone();
-        neutral_color_b.h = (neutral_color_b.h + 90.0) % 360.0;
-        let mut neutrals_b = cate::Neutrals::from_color_hue_adjusted(&neutral_color_b);
-
+        // Generate the neutral colors.
+        let mut neutrals = cate::Neutrals::from_color_hue_adjusted(&self.neutral_color);
         if self.cmyk_gamut_fitting {
-            neutrals_a = neutrals_a.to_cmyk_adjusted();
-            neutrals_b = neutrals_b.to_cmyk_adjusted();
+            neutrals = neutrals.to_cmyk_adjusted();
+        }
+        let neutral = neutrals.neutral.clone();
+        let neutrals = neutrals.into_iter().collect::<Vec<_>>();
+
+        // Draw the neutral colors, in ascending lightness
+        for (i, cell) in cells.iter().take(neutral_colors).enumerate() {
+            render_color_block(*cell, buf, neutrals[i]);
         }
 
-        let neutrals_a = neutrals_a.into_iter().collect::<Vec<_>>();
-        let neutrals_b = neutrals_b.into_iter().collect::<Vec<_>>();
+        // Draw accent colors, in ascending hue.
+        for (i, cell) in cells.iter().skip(neutral_colors).enumerate() {
+            // Derive the accent color.
+            let mut color = neutral.clone();
+            color.h = (neutral.h + (ACCENT_HUE_STEP * i as f32)) % 360.0;
+            color.c = color.c.max(ACCENT_MIN_CHROMA);
 
-        for (i, cell) in cells.enumerate() {
-            let colors = if i < cols { &neutrals_a } else { &neutrals_b };
-
-            let color = colors[i % cols];
-            let fg_color = if color.l >= 0.5 {
-                Color::Black
-            } else {
-                Color::White
-            };
-
-            let [r, g, b] = color.to_srgb();
-            let bg_color = Color::Rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8);
-
-            let mut paragraph = String::default();
-
-            // Draw hex code to wide cells.
-            if cell.width >= 11 {
-                let hex = color.to_hex().to_ascii_uppercase();
-                paragraph.push_str(&format!("\n  {hex}"));
+            // Derive the tones of the accent color.
+            let mut tones = cate::Neutrals::from_color_hue_adjusted(&color);
+            if self.cmyk_gamut_fitting {
+                tones = tones.to_cmyk_adjusted();
             }
 
-            // Draw LCH values to tall cells.
-            if cell.height >= 7 && cell.width >= 12 {
-                let bottom_padding = 3;
-                let bottom_lines = 3;
+            // Split the cell into three regions.
+            let [top, mid, bot] = Layout::vertical((0..3).map(|_| Constraint::Min(3)))
+                .spacing(0)
+                .areas(*cell);
 
-                for _ in 0..(cell.height - (bottom_padding + bottom_lines)) {
-                    paragraph.push('\n');
-                }
-
-                let l = format!("{:.2}", color.l);
-                let c = format!("{:.3}", color.c);
-                let h = format!("{:.2}", color.h);
-
-                paragraph.push_str(&format!("\n  L {l}"));
-                paragraph.push_str(&format!("\n  C {c}"));
-                paragraph.push_str(&format!("\n  H {h}"));
-            }
-
-            Paragraph::new(paragraph)
-                .fg(fg_color)
-                .block(Block::new())
-                .bg(bg_color)
-                .render(cell, buf);
+            // Draw colors.
+            render_color_block(top, buf, &tones.light);
+            render_color_block(mid, buf, &tones.neutral);
+            render_color_block(bot, buf, &tones.dark);
         }
     }
+}
+
+/// Fills `area` and `buff` with a block of `color`, overlaying
+/// metadata about the color if there's enough space.
+fn render_color_block(area: Rect, buff: &mut Buffer, color: &cate::Color) {
+    let fg_color = if color.l >= 0.5 {
+        Color::Black
+    } else {
+        Color::White
+    };
+
+    let [r, g, b] = color.to_srgb();
+    let bg_color = Color::Rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8);
+
+    // Draw hex code to wide areas.
+    let mut paragraph = String::default();
+    if area.width >= 11 {
+        let hex = color.to_hex().to_ascii_uppercase();
+        paragraph.push_str(&format!("\n  {hex}"));
+    }
+
+    // Draw LCH values to tall areas.
+    if area.height >= 7 && area.width >= 12 {
+        let bottom_padding = 3;
+        let bottom_lines = 3;
+
+        for _ in 0..(area.height - (bottom_padding + bottom_lines)) {
+            paragraph.push('\n');
+        }
+
+        let l = format!("{:.2}", color.l);
+        let c = format!("{:.3}", color.c);
+        let h = format!("{:.2}", color.h);
+
+        paragraph.push_str(&format!("\n  L {l}"));
+        paragraph.push_str(&format!("\n  C {c}"));
+        paragraph.push_str(&format!("\n  H {h}"));
+    }
+
+    Paragraph::new(paragraph)
+        .fg(fg_color)
+        .block(Block::new())
+        .bg(bg_color)
+        .render(area, buff);
 }
