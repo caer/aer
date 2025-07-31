@@ -5,12 +5,11 @@ use ratatui::{
     DefaultTerminal,
     buffer::Buffer,
     crossterm::event::{self, Event, KeyCode, KeyEventKind},
-    layout::{Alignment, Constraint, Flex, Layout, Rect},
-    style::{Color, Style, Stylize},
+    layout::{Constraint, Flex, Layout, Rect},
+    style::{Color, Stylize},
     text::Text,
     widgets::{Block, Paragraph, Widget},
 };
-use tui_textarea::TextArea;
 
 /// The default neutral color loaded on application start.
 const DEFAULT_NEUTRAL_COLOR: &str = "E9E2D0";
@@ -24,7 +23,7 @@ const NEUTRAL_MAX_CHROMA: f32 = 1.0;
 
 /// The number of degrees to shift hue by between
 /// each neutral-derived accent color.
-const ACCENT_HUE_STEP: f32 = 25.0;
+const ACCENT_HUE_STEP: f32 = 45.0;
 
 /// The minimum Chroma value assigned to each accent color.
 const ACCENT_MIN_CHROMA: f32 = 0.05;
@@ -37,39 +36,26 @@ fn main() -> std::io::Result<()> {
 }
 
 #[derive(Debug, Default)]
-struct App<'a> {
-    /// A widget that displays the full range of RGB colors that can be displayed in the terminal.
-    colors_widget: ColorsWidget<'a>,
+struct App {
+    colors_widget: ColorsWidget,
 }
 
 /// A widget that displays the full range of RGB colors that can be displayed in the terminal.
 ///
 /// This widget is animated and will change colors over time.
 #[derive(Debug, Default)]
-struct ColorsWidget<'a> {
+struct ColorsWidget {
     neutral_color: cate::Color,
-    base_color_input: TextArea<'a>,
     cmyk_gamut_fitting: bool,
 }
 
-impl App<'_> {
+impl App {
     /// Run the app.
     ///
     /// This is the main event loop for the app.
     pub fn run(mut self, mut terminal: DefaultTerminal) -> std::io::Result<()> {
         self.colors_widget.neutral_color =
             cate::Color::try_from_hex(DEFAULT_NEUTRAL_COLOR.into()).unwrap();
-        self.colors_widget
-            .base_color_input
-            .set_cursor_line_style(Style::default());
-        self.colors_widget
-            .base_color_input
-            .set_alignment(Alignment::Center);
-        self.colors_widget
-            .base_color_input
-            .set_placeholder_text(format!(
-                "{DEFAULT_NEUTRAL_COLOR} (enter a HEX color to change the base color)"
-            ));
 
         loop {
             terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
@@ -167,14 +153,6 @@ $c-darkest:  rgba({}, 1); // L={:.2} {gamut_str}"#,
                 } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Down {
                     self.colors_widget.neutral_color.c =
                         (self.colors_widget.neutral_color.c - NEUTRAL_CHROMA_STEP).max(0.0);
-                } else if self.colors_widget.base_color_input.input(key) {
-                    if let Ok(color) = cate::Color::try_from_hex(
-                        self.colors_widget.base_color_input.lines()[0]
-                            .clone()
-                            .into(),
-                    ) {
-                        self.colors_widget.neutral_color = color;
-                    }
                 }
             }
         }
@@ -187,16 +165,12 @@ $c-darkest:  rgba({}, 1); // L={:.2} {gamut_str}"#,
 ///
 /// This is implemented on a mutable reference so that the app can update its state while it is
 /// being rendered.
-impl Widget for &mut App<'_> {
+impl Widget for &mut App {
     fn render(self, area: Rect, buf: &mut Buffer) {
         use Constraint::{Length, Min};
-        let [top, colors, bottom] = Layout::vertical([Length(1), Min(0), Length(1)]).areas(area);
-        let [color_input_area] = Layout::horizontal([Min(0)]).areas(top);
+        let [top, colors, bottom] = Layout::vertical([Length(1), Min(0), Length(3)]).areas(area);
+        let [_] = Layout::horizontal([Min(0)]).areas(top);
         let [instructions_area] = Layout::horizontal([Min(0)]).areas(bottom);
-
-        self.colors_widget
-            .base_color_input
-            .render(color_input_area, buf);
 
         let base_chroma = format!("{:0.3}", self.colors_widget.neutral_color.c);
         let base_hue: String = format!("{:0.2}", self.colors_widget.neutral_color.h);
@@ -207,7 +181,7 @@ impl Widget for &mut App<'_> {
             "Enable"
         };
 
-        Text::from(format!("Q: Quit | ↑↓: Chroma ({base_chroma}) | ←→: Hue ({base_hue}) | G: {g_label} CMYK Gamut Fitting | W: Copy SCSS")).centered().render(instructions_area, buf);
+        Text::from(format!("\nQ: Quit | ↑↓: Chroma ({base_chroma}) | ←→: Hue ({base_hue}) | G: {g_label} CMYK Gamut Fitting | W: Copy SCSS")).centered().render(instructions_area, buf);
 
         let [colors] = Layout::horizontal([Min(0)])
             .flex(Flex::Center)
@@ -221,7 +195,7 @@ impl Widget for &mut App<'_> {
 ///
 /// This is implemented on a mutable reference so that we can update the frame count and store a
 /// cached version of the colors to render instead of recalculating them every frame.
-impl Widget for &mut ColorsWidget<'_> {
+impl Widget for &mut ColorsWidget {
     fn render(self, area: Rect, buf: &mut Buffer) {
         // Render a column for each neutral color.
         let neutral_colors = 7;
@@ -256,7 +230,7 @@ impl Widget for &mut ColorsWidget<'_> {
         for (i, cell) in cells.iter().skip(neutral_colors).enumerate() {
             // Derive the accent color.
             let mut color = neutral.clone();
-            color.h = (neutral.h + (ACCENT_HUE_STEP * i as f32)) % 360.0;
+            color.h = (neutral.h + (ACCENT_HUE_STEP * (1.0 + i as f32))) % 360.0;
             color.c = color.c.max(ACCENT_MIN_CHROMA);
 
             // Derive the tones of the accent color.
