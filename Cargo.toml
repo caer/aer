@@ -22,4 +22,3 @@ moxcms = "0.7.2"
 palette = "0.7.6"
 # Terminal rendering.
 ratatui = "0.29.0"
-tui-textarea = "0.7.0"
