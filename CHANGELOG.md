@@ -20,6 +20,7 @@ This file contains a chronological list of all major changes made to this crate.
 - Remove text field for neutral color
 - Add tab selection for the neutral and accent color groups
 - Add Asset and MediaType for building asset processors
+- Add markdown asset processor
 
 ### 🛡️ Operations
 

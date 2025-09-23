@@ -16,6 +16,8 @@ arboard = "3.6.0"
 # Data types
 codas = "0.5.1"
 codas-macros = "0.5.1"
+# Markdown processing.
+markdown = "1.0.0-alpha.21"
 # ICC color profiles
 moxcms = "0.7.2"
 # Colorspaces

@@ -2,6 +2,8 @@ use codas::types::Text;
 
 use crate::asset::media_type::MediaType;
 
+pub mod markdown;
+
 pub mod media_type;
 
 /// An asset meant to be processed by anything that [ProcessesAssets].
@@ -99,7 +101,7 @@ mod tests {
         assert_eq!(
             "Hello, world!",
             markdown_asset.contents.try_as_mut_text().unwrap()
-        );      
+        );
 
         let binary_asset = Asset::new("data.dat".into(), (-1337i16).to_le_bytes().to_vec());
         assert_eq!("data.dat", binary_asset.path());
