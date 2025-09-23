@@ -250,8 +250,8 @@ mod tests {
         let mut markdown_asset = Asset::new(
             "test.md".into(),
             "# Header 1\nBody\n> Quotation in **bold** and _italics_."
-            .as_bytes()
-            .to_vec(),
+                .as_bytes()
+                .to_vec(),
         );
 
         MarkdownProcessor {}.process(&mut markdown_asset);

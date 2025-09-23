@@ -1,3 +1,6 @@
+//! This module contains things that [ProcessesAssets],
+//! like SCSS compilers, Markdown transpilers, and image
+//! minifiers.
 use codas::types::Text;
 
 use crate::asset::media_type::MediaType;

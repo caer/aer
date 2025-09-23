@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use arboard::Clipboard;
+use cate::tool::color::Neutrals;
 use ratatui::{
     DefaultTerminal,
     buffer::Buffer,
@@ -46,7 +47,7 @@ struct App {
 #[derive(Debug, Default)]
 struct ColorsWidget {
     /// The base neutral color from which all neutral tones are derived.
-    base_neutral_color: cate::Color,
+    base_neutral_color: cate::tool::color::Color,
 
     /// The chromaticity of the base accent color.
     base_accent_chromaticity: f32,
@@ -68,7 +69,7 @@ impl App {
     /// This is the main event loop for the app.
     pub fn run(mut self, mut terminal: DefaultTerminal) -> std::io::Result<()> {
         self.colors_widget.base_neutral_color =
-            cate::Color::try_from_hex(DEFAULT_NEUTRAL_COLOR.into()).unwrap();
+            cate::tool::color::Color::try_from_hex(DEFAULT_NEUTRAL_COLOR.into()).unwrap();
         self.colors_widget.base_accent_chromaticity = self
             .colors_widget
             .base_neutral_color
@@ -113,7 +114,7 @@ impl App {
             // Copy the current neutral colors to the keyboard as SCSS RGBA colors.
             if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('w') {
                 let mut neutrals =
-                    cate::Neutrals::from_color_hue_adjusted(&self.colors_widget.base_neutral_color);
+                    Neutrals::from_color_hue_adjusted(&self.colors_widget.base_neutral_color);
 
                 let base_color_str = format!(
                     "{} (sRGB HEX) | oklch({:.2} {:.3} {:.2})",
@@ -247,7 +248,7 @@ impl Widget for &mut App {
 impl Widget for &mut ColorsWidget {
     fn render(self, area: Rect, buf: &mut Buffer) {
         // Generate the neutral colors.
-        let mut neutrals = cate::Neutrals::from_color_hue_adjusted(&self.base_neutral_color);
+        let mut neutrals = Neutrals::from_color_hue_adjusted(&self.base_neutral_color);
         if self.cmyk_gamut_fitting {
             neutrals = neutrals.to_cmyk_adjusted();
         }
@@ -309,7 +310,7 @@ impl Widget for &mut ColorsWidget {
             color.c = self.base_accent_chromaticity;
 
             // Derive the tones of the accent color.
-            let mut tones = cate::Neutrals::from_color_hue_adjusted(&color);
+            let mut tones = Neutrals::from_color_hue_adjusted(&color);
             if self.cmyk_gamut_fitting {
                 tones = tones.to_cmyk_adjusted();
             }
@@ -329,7 +330,7 @@ impl Widget for &mut ColorsWidget {
 
 /// Fills `area` and `buff` with a block of `color`, overlaying
 /// metadata about the color if there's enough space.
-fn render_color_block(area: Rect, buff: &mut Buffer, color: &cate::Color) {
+fn render_color_block(area: Rect, buff: &mut Buffer, color: &cate::tool::color::Color) {
     let fg_color = if color.l >= 0.5 {
         Color::Black
     } else {

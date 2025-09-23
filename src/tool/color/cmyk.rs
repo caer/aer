@@ -1,7 +1,7 @@
 //! Unstable
 use moxcms::{ColorProfile, Layout, TransformOptions};
 
-use crate::Color;
+use super::Color;
 
 /// Coated GRACoL 2006 ICC profile.
 ///
@@ -9,7 +9,7 @@ use crate::Color;
 /// CMYK ICC profile because it was what my
 /// (Caer's) primary printing vendor ([Moo](https://moo.com))
 /// used at the time of creating this module.
-const ICC_COATED_GRACOL_2006: &[u8] = include_bytes!("../assets/GRACoL2006_Coated1v2.icc");
+const ICC_COATED_GRACOL_2006: &[u8] = include_bytes!("GRACoL2006_Coated1v2.icc");
 
 /// Converts `color` to CMYK within the
 /// Coated GRACoL 2006 ICC profile, returning

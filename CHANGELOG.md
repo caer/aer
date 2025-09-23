@@ -25,6 +25,7 @@ This file contains a chronological list of all major changes made to this crate.
 ### 🛡️ Operations
 
 - Update devcontainer to latest workbench version, and remove redundant ops scripts
+- Move color tooling to sub-module
 
 ### 📚 Documentation
 
