@@ -96,42 +96,42 @@ impl App {
         // approximately 60 FPS (this doesn't account for the time to render the frame, and will
         // also update the app immediately any time an event occurs)
         let timeout = Duration::from_secs_f32(1.0 / 60.0);
-        if event::poll(timeout)? {
-            if let Event::Key(key) = event::read()? {
-                // Exit the application.
-                if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('q') {
-                    return Ok(false);
-                }
+        if event::poll(timeout)?
+            && let Event::Key(key) = event::read()?
+        {
+            // Exit the application.
+            if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('q') {
+                return Ok(false);
+            }
 
-                // Toggle CMYK color gamut fitting.
-                if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('g') {
-                    self.colors_widget.cmyk_gamut_fitting = !self.colors_widget.cmyk_gamut_fitting;
-                    return Ok(true);
-                }
+            // Toggle CMYK color gamut fitting.
+            if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('g') {
+                self.colors_widget.cmyk_gamut_fitting = !self.colors_widget.cmyk_gamut_fitting;
+                return Ok(true);
+            }
 
-                // Copy the current neutral colors to the keyboard as SCSS RGBA colors.
-                if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('w') {
-                    let mut neutrals = cate::Neutrals::from_color_hue_adjusted(
-                        &self.colors_widget.base_neutral_color,
-                    );
+            // Copy the current neutral colors to the keyboard as SCSS RGBA colors.
+            if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('w') {
+                let mut neutrals =
+                    cate::Neutrals::from_color_hue_adjusted(&self.colors_widget.base_neutral_color);
 
-                    let base_color_str = format!(
-                        "{} (sRGB HEX) | oklch({:.2} {:.3} {:.2})",
-                        &self.colors_widget.base_neutral_color,
-                        self.colors_widget.base_neutral_color.l,
-                        self.colors_widget.base_neutral_color.c,
-                        self.colors_widget.base_neutral_color.h,
-                    );
+                let base_color_str = format!(
+                    "{} (sRGB HEX) | oklch({:.2} {:.3} {:.2})",
+                    &self.colors_widget.base_neutral_color,
+                    self.colors_widget.base_neutral_color.l,
+                    self.colors_widget.base_neutral_color.c,
+                    self.colors_widget.base_neutral_color.h,
+                );
 
-                    let gamut_str = if self.colors_widget.cmyk_gamut_fitting {
-                        neutrals = neutrals.to_cmyk_adjusted();
-                        "(in Coated GRACoL 2006 CMYK Gamut)"
-                    } else {
-                        "(in sRGB Gamut)"
-                    };
+                let gamut_str = if self.colors_widget.cmyk_gamut_fitting {
+                    neutrals = neutrals.to_cmyk_adjusted();
+                    "(in Coated GRACoL 2006 CMYK Gamut)"
+                } else {
+                    "(in sRGB Gamut)"
+                };
 
-                    let colors = format!(
-                        r#"// {base_color_str}
+                let colors = format!(
+                    r#"// {base_color_str}
 $c-lightest: rgba({}, 1); // L={:.2} {gamut_str}
 $c-lighter:  rgba({}, 1); // L={:.2} {gamut_str}
 $c-light:    rgba({}, 1); // L={:.2} {gamut_str}
@@ -139,72 +139,69 @@ $c-neutral:  rgba({}, 1); // L={:.2} {gamut_str}
 $c-dark:     rgba({}, 1); // L={:.2} {gamut_str}
 $c-darker:   rgba({}, 1); // L={:.2} {gamut_str}
 $c-darkest:  rgba({}, 1); // L={:.2} {gamut_str}"#,
-                        neutrals.lightest,
-                        neutrals.lightest.l,
-                        neutrals.lighter,
-                        neutrals.lighter.l,
-                        neutrals.light,
-                        neutrals.light.l,
-                        neutrals.neutral,
-                        neutrals.neutral.l,
-                        neutrals.dark,
-                        neutrals.dark.l,
-                        neutrals.darker,
-                        neutrals.darker.l,
-                        neutrals.darkest,
-                        neutrals.darkest.l,
-                    );
+                    neutrals.lightest,
+                    neutrals.lightest.l,
+                    neutrals.lighter,
+                    neutrals.lighter.l,
+                    neutrals.light,
+                    neutrals.light.l,
+                    neutrals.neutral,
+                    neutrals.neutral.l,
+                    neutrals.dark,
+                    neutrals.dark.l,
+                    neutrals.darker,
+                    neutrals.darker.l,
+                    neutrals.darkest,
+                    neutrals.darkest.l,
+                );
 
-                    let mut clipboard = Clipboard::new().unwrap();
-                    clipboard.set_text(colors).unwrap();
-                    return Ok(true);
+                let mut clipboard = Clipboard::new().unwrap();
+                clipboard.set_text(colors).unwrap();
+                return Ok(true);
+            }
+
+            // Cycle selected colors on tab.
+            if key.kind == KeyEventKind::Press && key.code == KeyCode::Tab {
+                self.colors_widget.active_color_block_index += 1;
+                self.colors_widget.active_color_block_index %= 2;
+                return Ok(true);
+            }
+
+            // Handle input events for the neutral color.
+            if key.kind == KeyEventKind::Press && key.code == KeyCode::Right {
+                if self.colors_widget.active_color_block_index == 0 {
+                    self.colors_widget.base_neutral_color.h =
+                        (self.colors_widget.base_neutral_color.h + 1.0) % 360.0;
+                } else {
+                    self.colors_widget.base_accent_hue_offset =
+                        (self.colors_widget.base_accent_hue_offset + 1.0) % 360.0;
                 }
-
-                // Cycle selected colors on tab.
-                if key.kind == KeyEventKind::Press && key.code == KeyCode::Tab {
-                    self.colors_widget.active_color_block_index += 1;
-                    self.colors_widget.active_color_block_index =
-                        self.colors_widget.active_color_block_index % 2;
-                    return Ok(true);
+            } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Left {
+                if self.colors_widget.active_color_block_index == 0 {
+                    self.colors_widget.base_neutral_color.h =
+                        (self.colors_widget.base_neutral_color.h - 1.0) % 360.0;
+                } else {
+                    self.colors_widget.base_accent_hue_offset =
+                        (self.colors_widget.base_accent_hue_offset - 1.0) % 360.0;
                 }
-
-                // Handle input events for the neutral color.
-                if key.kind == KeyEventKind::Press && key.code == KeyCode::Right {
-                    if self.colors_widget.active_color_block_index == 0 {
-                        self.colors_widget.base_neutral_color.h =
-                            (self.colors_widget.base_neutral_color.h + 1.0) % 360.0;
-                    } else {
-                        self.colors_widget.base_accent_hue_offset =
-                            (self.colors_widget.base_accent_hue_offset + 1.0) % 360.0;
-                    }
-                } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Left {
-                    if self.colors_widget.active_color_block_index == 0 {
-                        self.colors_widget.base_neutral_color.h =
-                            (self.colors_widget.base_neutral_color.h - 1.0) % 360.0;
-                    } else {
-                        self.colors_widget.base_accent_hue_offset =
-                            (self.colors_widget.base_accent_hue_offset - 1.0) % 360.0;
-                    }
-                } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Up {
-                    if self.colors_widget.active_color_block_index == 0 {
-                        self.colors_widget.base_neutral_color.c =
-                            (self.colors_widget.base_neutral_color.c + NEUTRAL_CHROMA_STEP)
-                                .min(NEUTRAL_MAX_CHROMA);
-                    } else {
-                        self.colors_widget.base_accent_chromaticity =
-                            (self.colors_widget.base_accent_chromaticity + NEUTRAL_CHROMA_STEP)
-                                .min(NEUTRAL_MAX_CHROMA);
-                    }
-                } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Down {
-                    if self.colors_widget.active_color_block_index == 0 {
-                        self.colors_widget.base_neutral_color.c =
-                            (self.colors_widget.base_neutral_color.c - NEUTRAL_CHROMA_STEP)
-                                .max(0.0);
-                    } else {
-                        self.colors_widget.base_accent_chromaticity =
-                            (self.colors_widget.base_accent_chromaticity - NEUTRAL_CHROMA_STEP)
-                                .max(0.0);
-                    }
+            } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Up {
+                if self.colors_widget.active_color_block_index == 0 {
+                    self.colors_widget.base_neutral_color.c =
+                        (self.colors_widget.base_neutral_color.c + NEUTRAL_CHROMA_STEP)
+                            .min(NEUTRAL_MAX_CHROMA);
+                } else {
+                    self.colors_widget.base_accent_chromaticity =
+                        (self.colors_widget.base_accent_chromaticity + NEUTRAL_CHROMA_STEP)
+                            .min(NEUTRAL_MAX_CHROMA);
+                }
+            } else if key.kind == KeyEventKind::Press && key.code == KeyCode::Down {
+                if self.colors_widget.active_color_block_index == 0 {
+                    self.colors_widget.base_neutral_color.c =
+                        (self.colors_widget.base_neutral_color.c - NEUTRAL_CHROMA_STEP).max(0.0);
+                } else {
+                    self.colors_widget.base_accent_chromaticity =
+                        (self.colors_widget.base_accent_chromaticity - NEUTRAL_CHROMA_STEP)
+                            .max(0.0);
                 }
             }
         }
@@ -291,7 +288,7 @@ impl Widget for &mut ColorsWidget {
             block.render(*row, buf);
 
             // Split the row into cells.
-            cells.extend_from_slice(&*horizontal.split(block_area));
+            cells.extend_from_slice(&horizontal.split(block_area));
         }
 
         // Convert neutrals into a list for rendering.

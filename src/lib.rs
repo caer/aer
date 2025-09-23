@@ -4,6 +4,7 @@ use codas::types::Text;
 use codas_macros::export_coda;
 use palette::{FromColor, IntoColor, Oklab, Oklch, Srgb};
 
+pub mod asset;
 pub mod cmyk;
 pub mod curve;
 
