@@ -30,6 +30,7 @@ This file contains a chronological list of all major changes made to this crate.
 ### 📚 Documentation
 
 - Draft the ColorSystem data
+- Draft contributing.md, relicense to FSL, and draft CLA-like content
 
 ## [0.1.1] - 2025-07-12
 
