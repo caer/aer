@@ -30,13 +30,26 @@ mod tests {
 
     #[test]
     fn processes_scss() {
-        let mut scss_asset = Asset::new("src/test/test.scss".into(), "".as_bytes().to_vec());
+        let mut simple_scss_asset =
+            Asset::new("test/simple_example.scss".into(), "".as_bytes().to_vec());
 
-        ScssProcessor {}.process(&mut scss_asset);
+        ScssProcessor {}.process(&mut simple_scss_asset);
 
         assert_eq!(
             "body {\n  font: 100% Helvetica, sans-serif;\n  color: #333;\n}\n",
-            scss_asset.contents.try_as_mut_text().unwrap()
+            simple_scss_asset.contents.try_as_mut_text().unwrap()
+        );
+
+        let mut simple_nested_scss_asset = Asset::new(
+            "test/simple_nested_example.scss".into(),
+            "".as_bytes().to_vec(),
+        );
+
+        ScssProcessor {}.process(&mut simple_nested_scss_asset);
+
+        assert_eq!(
+            "nav ul {\n  margin: 0;\n  padding: 0;\n  list-style: none;\n}\nnav li {\n  display: inline-block;\n}\nnav a {\n  display: block;\n  padding: 6px 12px;\n  text-decoration: none;\n}\n",
+            simple_nested_scss_asset.contents.try_as_mut_text().unwrap()
         );
     }
 }
