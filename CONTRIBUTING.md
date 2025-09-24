@@ -26,7 +26,7 @@ by most of our projects' Dev Containers, but can be manually installed by clonin
 [`OwC-workbench`](https://github.com/with-caer/OwC-workbench)
 and running [`install-tools.sh`](https://github.com/with-caer/OwC-workbench/blob/main/install-tools.sh).
 
-## Contributor's License Certificate
+## Contributors' License Agreement
 
 The _vast_ majority of our projects are licensed under one of the following licenses:
 
@@ -36,7 +36,6 @@ The _vast_ majority of our projects are licensed under one of the following lice
 
 While contributions to open source projects are typically covered by the ["inbound=outbound" clause in GitHub's term of service](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service#6-contributions-under-repository-license), contributions to "Fair Source" projects might not be.
 
-So that we can adopt and maintain "Fair Source" licensing for our projects, we ask contributors to attach a
-[Contributor's License Certificate](.github/pull_request_template.md#contributors-license-certificate-version-10) to each pull request.
+So that we can adopt and maintain "Fair Source" licensing for our projects, we ask contributors to agree to our [Contributors' License Agreement](.github/pull_request_template.md#with-caer-contributors-license-agreement-version-10) as part of each pull request.
 
-Our pull request template automatically attaches this certificate: As a contributor, all you have to do is check the box confirming you've read and agree to the terms of the certificate.
+Our pull request template automatically attaches this agreement: As a contributor, all you have to do is check the box confirming you've read and agree to the terms of the agreement.
