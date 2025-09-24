@@ -24,3 +24,5 @@ moxcms = "0.7.2"
 palette = "0.7.6"
 # Terminal rendering.
 ratatui = "0.29.0"
+# SASS-y compiler
+grass = "0.13.4"
