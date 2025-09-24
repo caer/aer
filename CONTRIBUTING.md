@@ -1,6 +1,7 @@
 # Contributing With Caer: A Guide
 
-This doc is a general guide on how to contribute to projects owned by @caer and @with-caer ("our projects").
+This doc is a general guide on how to contribute to projects owned by
+[@caer](https://www.github.com/caer) and [@with-caer](https://www.github.com/with-caer)  ("our projects").
 
 ## Contributing Code
 

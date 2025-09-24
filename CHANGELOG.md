@@ -22,6 +22,10 @@ This file contains a chronological list of all major changes made to this crate.
 - Add Asset and MediaType for building asset processors
 - Add markdown asset processor
 
+### 🐛 Fixes
+
+- GitHub URLs in contributing guide
+
 ### 🛡️ Operations
 
 - Update devcontainer to latest workbench version, and remove redundant ops scripts
