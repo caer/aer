@@ -1,9 +1,9 @@
 [package]
 name = "cate"
-description = "A toolkit for creating color palettes!"
+description = "A command-line toolkit for creatives."
 version = "0.1.1"
 edition = "2024"
-license = "AGPL-3.0-only"
+license = "FSL-1.1-MIT"
 readme = "README.md"
 repository = "https://github.com/caer/cate"
 authors = [

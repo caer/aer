@@ -22,6 +22,10 @@ This file contains a chronological list of all major changes made to this crate.
 - Add Asset and MediaType for building asset processors
 - Add markdown asset processor
 
+### 🐛 Fixes
+
+- GitHub URLs in contributing guide
+
 ### 🛡️ Operations
 
 - Update devcontainer to latest workbench version, and remove redundant ops scripts
@@ -30,6 +34,8 @@ This file contains a chronological list of all major changes made to this crate.
 ### 📚 Documentation
 
 - Draft the ColorSystem data
+- Draft contributing.md, relicense to FSL, and draft CLA-like content
+- Update CLA modeled after indieopensource/tiny-cla
 
 ## [0.1.1] - 2025-07-12
 
