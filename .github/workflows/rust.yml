@@ -1,5 +1,5 @@
 ---
-name: Rust Build
+name: Rust
 
 on:
   push:
@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 jobs:
-    build-devcontainer:
+    check-and-test:
       runs-on: ubuntu-latest
       steps:
         - uses: actions/checkout@v4
@@ -31,7 +31,7 @@ jobs:
           run: |
             echo "repo=${GITHUB_REPOSITORY@L}" >> $GITHUB_OUTPUT
 
-        - name: Publish 
+        - name: Build Devcontainer and Run Checks and Tests 
           uses: devcontainers/ci@v0.3
           with:
             imageName: ghcr.io/${{ steps.lower-repo.outputs.repo }}/devcontainer

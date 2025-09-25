@@ -28,6 +28,7 @@ This file contains a chronological list of all major changes made to this crate.
 - Add paths
 - Concurrency
 - Repo
+- Ci names
 
 ### 🛡️ Operations
 
