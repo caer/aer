@@ -1,6 +1,6 @@
 use markdown::mdast::Node;
 
-use crate::asset::{media_type::MediaType, Error, ProcessesAssets};
+use crate::asset::{Error, ProcessesAssets, media_type::MediaType};
 
 pub struct MarkdownProcessor {}
 
