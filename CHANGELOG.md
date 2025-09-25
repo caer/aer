@@ -21,21 +21,18 @@ This file contains a chronological list of all major changes made to this crate.
 - Add tab selection for the neutral and accent color groups
 - Add Asset and MediaType for building asset processors
 - Add markdown asset processor
-
-### 🐛 Fixes
-
-- GitHub URLs in contributing guide
+- Add grass crate to project and implement SCSS to css conversion (#5)
 
 ### 🛡️ Operations
 
 - Update devcontainer to latest workbench version, and remove redundant ops scripts
 - Move color tooling to sub-module
+- Add Rust CI Job
 
 ### 📚 Documentation
 
 - Draft the ColorSystem data
-- Draft contributing.md, relicense to FSL, and draft CLA-like content
-- Update CLA modeled after indieopensource/tiny-cla
+- Add Contribution Guidelines and Relicense to FSL (#6)
 
 ## [0.1.1] - 2025-07-12
 
