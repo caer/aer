@@ -10,9 +10,6 @@ on:
       - "**.toml"
   workflow_dispatch:
 
-concurrency:
-  cancel-in-progress: true
-
 jobs:
     build-devcontainer:
       runs-on: ubuntu-latest

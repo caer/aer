@@ -26,6 +26,7 @@ This file contains a chronological list of all major changes made to this crate.
 ### 🐛 Fixes
 
 - Add paths
+- Concurrency
 
 ### 🛡️ Operations
 
