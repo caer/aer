@@ -23,6 +23,10 @@ This file contains a chronological list of all major changes made to this crate.
 - Add markdown asset processor
 - Add grass crate to project and implement SCSS to css conversion (#5)
 
+### 🐛 Fixes
+
+- Add paths
+
 ### 🛡️ Operations
 
 - Update devcontainer to latest workbench version, and remove redundant ops scripts
