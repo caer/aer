@@ -1,0 +1,44 @@
+---
+name: Rust
+
+on:
+  push:
+      paths:
+      - ".devcontainer.json"
+      - ".github/workflows/**/*"
+      - "**.rs"
+      - "**.toml"
+  workflow_dispatch:
+
+jobs:
+    check-and-test:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+
+        - name: Login to GHCR.
+          uses: docker/login-action@v2
+          with:
+            registry: ghcr.io
+            username: ${{ github.repository_owner }}
+            password: ${{ secrets.GITHUB_TOKEN }}
+
+        # Convert repository name to lowercase; without
+        # this step, ghcr.io will reject the image
+        # name(s) used in the next step.
+        - id: lower-repo
+          name: Convert Repo Name to Lowercase
+          run: |
+            echo "repo=${GITHUB_REPOSITORY@L}" >> $GITHUB_OUTPUT
+
+        - name: Build Devcontainer and Run Checks and Tests 
+          uses: devcontainers/ci@v0.3
+          with:
+            imageName: ghcr.io/${{ steps.lower-repo.outputs.repo }}/devcontainer
+            cacheFrom: ghcr.io/${{ steps.lower-repo.outputs.repo }}/devcontainer
+            push: filter
+            refFilterForPush: refs/heads/main
+            runCmd: |
+              cargo fmt --check
+              cargo clippy
+              cargo test
