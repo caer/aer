@@ -1,6 +1,7 @@
 //! This module contains things that [ProcessesAssets],
 //! like SCSS compilers, Markdown transpilers, and image
 //! minifiers.
+use ::markdown::message::Message;
 use codas::types::Text;
 
 use crate::asset::media_type::MediaType;
@@ -79,13 +80,27 @@ impl AssetContents {
 /// A thing that processes [Asset]s.
 pub trait ProcessesAssets {
     /// Processes `asset`.
-    fn process(&self, asset: &mut Asset);
+    fn process(&self, asset: &mut Asset) -> Result<(), Error>;
 }
 
 #[derive(Debug)]
 pub enum Error {
     /// An asset contained data that wasn't text.
     NotText,
+    ScssCompilationError,
+    MarkdownCompilationError,
+}
+
+impl From<Box<grass::Error>> for Error {
+    fn from(_error: Box<grass::Error>) -> Self {
+        Error::ScssCompilationError
+    }
+}
+
+impl From<Message> for Error {
+    fn from(_error: Message) -> Self {
+        Error::MarkdownCompilationError
+    }
 }
 
 #[cfg(test)]
