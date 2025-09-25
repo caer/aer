@@ -6,8 +6,8 @@ use codas::types::Text;
 use crate::asset::media_type::MediaType;
 
 pub mod markdown;
-
 pub mod media_type;
+pub mod scss;
 
 /// An asset meant to be processed by anything that [ProcessesAssets].
 #[derive(Clone, Debug)]
