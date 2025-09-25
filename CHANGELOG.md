@@ -25,16 +25,13 @@ This file contains a chronological list of all major changes made to this crate.
 
 ### 🐛 Fixes
 
-- Add paths
-- Concurrency
-- Repo
-- Ci names
+- CI permissions for package writes
 
 ### 🛡️ Operations
 
 - Update devcontainer to latest workbench version, and remove redundant ops scripts
 - Move color tooling to sub-module
-- Add Rust CI Job
+- Add Rust CI Job (#7)
 
 ### 📚 Documentation
 
