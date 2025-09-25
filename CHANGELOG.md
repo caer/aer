@@ -37,6 +37,7 @@ This file contains a chronological list of all major changes made to this crate.
 
 - Draft the ColorSystem data
 - Add Contribution Guidelines and Relicense to FSL (#6)
+- Remove files now handled by org-wide .github
 
 ## [0.1.1] - 2025-07-12
 
