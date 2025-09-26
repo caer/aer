@@ -24,6 +24,7 @@ This file contains a chronological list of all major changes made to this crate.
 - Add grass crate to project and implement SCSS to css conversion (#5)
 - Implement Lanczos-based image resizing processor
 - Encapsulate details of assets' contents inside the asset module.
+- Rename asset module to process module
 
 ### 🐛 Fixes
 

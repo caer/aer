@@ -2,7 +2,7 @@ use std::path::Path;
 
 use grass::{Options, from_path};
 
-use crate::asset::{AssetError, ProcessesAssets, media_type::MediaType};
+use crate::process::{AssetError, ProcessesAssets, media_type::MediaType};
 
 impl From<Box<grass::Error>> for AssetError {
     fn from(error: Box<grass::Error>) -> Self {
@@ -40,7 +40,7 @@ impl ProcessesAssets for ScssProcessor {
 
 #[cfg(test)]
 mod tests {
-    use crate::asset::Asset;
+    use crate::process::Asset;
 
     use super::*;
 

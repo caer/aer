@@ -2,7 +2,7 @@ use std::io::Cursor;
 
 use image::ImageFormat;
 
-use crate::asset::{AssetError, ProcessesAssets, media_type::MediaCategory};
+use crate::process::{AssetError, ProcessesAssets, media_type::MediaCategory};
 
 /// Resizes images to fit within a given width and height,
 /// preserving the image's original aspect ratio.
@@ -77,7 +77,7 @@ impl ProcessesAssets for ImageResizeProcessor {
 
 #[cfg(test)]
 mod tests {
-    use crate::asset::{Asset, ProcessesAssets, image::ImageResizeProcessor};
+    use crate::process::{Asset, ProcessesAssets, image::ImageResizeProcessor};
 
     #[test_log::test]
     #[test_log(default_log_filter = "debug")]

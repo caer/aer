@@ -1,6 +1,6 @@
 use markdown::{mdast::Node, message::Message};
 
-use crate::asset::{AssetError, ProcessesAssets, media_type::MediaType};
+use crate::process::{AssetError, ProcessesAssets, media_type::MediaType};
 
 impl From<Message> for AssetError {
     fn from(error: Message) -> Self {
@@ -257,7 +257,7 @@ fn compile_ast_node_children(node: &Node, compiled_html: &mut String) {
 
 #[cfg(test)]
 mod tests {
-    use crate::asset::Asset;
+    use crate::process::Asset;
 
     use super::*;
 
