@@ -25,11 +25,11 @@ pub struct ImageResizeProcessor {
 impl ProcessesAssets for ImageResizeProcessor {
     fn process(&self, asset: &mut super::Asset) -> Result<(), AssetError> {
         // Skip assets that aren't images.
-        if asset.media_type.category() != MediaCategory::Image {
+        if asset.media_type().category() != MediaCategory::Image {
             tracing::debug!(
                 "skipping asset {}: not an image: {}",
                 asset.path(),
-                asset.media_type.name()
+                asset.media_type().name()
             );
             return Ok(());
         }
@@ -39,7 +39,7 @@ impl ProcessesAssets for ImageResizeProcessor {
             ImageFormat::from_path(asset.path().as_str()).map_err(|e| AssetError::Malformed {
                 message: e.to_string().into(),
             })?;
-        let image_bytes = asset.contents.try_as_mut_bytes()?;
+        let image_bytes = asset.as_mut_bytes()?;
         let image = image::load_from_memory(image_bytes).map_err(|e| AssetError::Malformed {
             message: e.to_string().into(),
         })?;
@@ -99,7 +99,7 @@ mod tests {
             .unwrap();
 
         // Check the dimensions of the resized image.
-        let resized_image = image::load_from_memory(asset.contents.as_bytes()).unwrap();
+        let resized_image = image::load_from_memory(asset.as_bytes()).unwrap();
         assert_eq!(width, resized_image.width());
         assert_eq!(243, resized_image.height());
     }

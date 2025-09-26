@@ -1,5 +1,5 @@
 /// Collection of all media or "MIME" types that
-/// are _explicitly_ supported by asset procesors.
+/// are _explicitly_ supported by this crate.
 ///
 /// See: https://www.iana.org/assignments/media-types/media-types.xhtml
 use codas::types::Text;

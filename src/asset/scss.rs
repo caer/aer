@@ -15,6 +15,15 @@ pub struct ScssProcessor {}
 
 impl ProcessesAssets for ScssProcessor {
     fn process(&self, asset: &mut super::Asset) -> Result<(), AssetError> {
+        if *asset.media_type() != MediaType::Scss {
+            tracing::debug!(
+                "skipping asset {}: not SCSS {}",
+                asset.path(),
+                asset.media_type().name()
+            );
+            return Ok(());
+        }
+
         // Get Path Ref
         let path_text = asset.path().clone();
         let path: &str = path_text.as_ref();
@@ -23,9 +32,7 @@ impl ProcessesAssets for ScssProcessor {
         let css = from_path(Path::new(path), &Options::default())?;
 
         // Update the asset's contents and target extension.
-        let text = asset.contents.try_as_mut_text()?;
-        *text.to_mut() = css;
-        asset.media_type = MediaType::Css;
+        asset.replace_with_text(css.into(), MediaType::Scss);
 
         Ok(())
     }
@@ -46,7 +53,7 @@ mod tests {
 
         assert_eq!(
             "body {\n  font: 100% Helvetica, sans-serif;\n  color: #333;\n}\n",
-            simple_scss_asset.contents.try_as_mut_text().unwrap()
+            simple_scss_asset.as_text().unwrap()
         );
 
         let mut simple_nested_scss_asset = Asset::new(
@@ -58,7 +65,7 @@ mod tests {
 
         assert_eq!(
             "nav ul {\n  margin: 0;\n  padding: 0;\n  list-style: none;\n}\nnav li {\n  display: inline-block;\n}\nnav a {\n  display: block;\n  padding: 6px 12px;\n  text-decoration: none;\n}\n",
-            simple_nested_scss_asset.contents.try_as_mut_text().unwrap()
+            simple_nested_scss_asset.as_text().unwrap()
         );
     }
 }
