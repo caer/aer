@@ -25,6 +25,7 @@ This file contains a chronological list of all major changes made to this crate.
 - Implement Lanczos-based image resizing processor
 - Encapsulate details of assets' contents inside the asset module.
 - Rename asset module to process module
+- Extract asset from proces module
 
 ### 🐛 Fixes
 
