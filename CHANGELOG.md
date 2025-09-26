@@ -22,10 +22,12 @@ This file contains a chronological list of all major changes made to this crate.
 - Add Asset and MediaType for building asset processors
 - Add markdown asset processor
 - Add grass crate to project and implement SCSS to css conversion (#5)
+- Implement Lanczos-based image resizing processor
 
 ### 🐛 Fixes
 
 - CI permissions for package writes
+- Updated `ProcessesAssets` trait to return `Result<(), Error>` (#8)
 
 ### 🛡️ Operations
 

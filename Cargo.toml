@@ -16,6 +16,10 @@ arboard = "3.6.0"
 # Data types
 codas = "0.5.1"
 codas-macros = "0.5.1"
+# SASS-y compiler
+grass = "0.13.4"
+# Image processing.
+image = { version = "0.25.8", default-features = false, features = ["rayon", "jpeg", "png", "gif", "ico", "webp"] }
 # Markdown processing.
 markdown = "1.0.0-alpha.21"
 # ICC color profiles
@@ -24,5 +28,9 @@ moxcms = "0.7.2"
 palette = "0.7.6"
 # Terminal rendering.
 ratatui = "0.29.0"
-# SASS-y compiler
-grass = "0.13.4"
+# Logging.
+tracing = "0.1.41"
+tracing-subscriber = "0.3.20"
+
+[dev-dependencies]
+test-log = { version = "0.2.18", default-features = false, features = ["trace", "unstable"] }

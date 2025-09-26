@@ -5,6 +5,7 @@ use codas::types::Text;
 
 use crate::asset::media_type::MediaType;
 
+pub mod image;
 pub mod markdown;
 pub mod media_type;
 pub mod scss;
@@ -26,7 +27,7 @@ pub struct Asset {
 }
 
 impl Asset {
-    /// Returns a new asset at `path` with `contents`.
+    /// Returns a new asset with `path` and `contents`.
     pub fn new(path: Text, contents: Vec<u8>) -> Self {
         // Try to convert the vector to UTF-8 bytes.
         let contents = if let Ok(text) = str::from_utf8(&contents) {
@@ -35,7 +36,7 @@ impl Asset {
             AssetContents::Binary(contents)
         };
 
-        // Extract the media type fro the path.
+        // Extract the media type from the path.
         let media_type = MediaType::from_extension(path.split('.').next_back().unwrap_or_default());
 
         Self {
@@ -67,11 +68,19 @@ impl AssetContents {
         }
     }
 
+    /// Returns the contents as mutable bytes.
+    pub fn try_as_mut_bytes(&mut self) -> Result<&mut Vec<u8>, AssetError> {
+        match self {
+            AssetContents::Binary(bytes) => Ok(bytes),
+            _ => Err(AssetError::NonBinary),
+        }
+    }
+
     /// Returns the contents as mutable text.
     pub fn try_as_mut_text(&mut self) -> Result<&mut Text, AssetError> {
         match self {
             AssetContents::Text(text) => Ok(text),
-            _ => Err(AssetError::NotText),
+            _ => Err(AssetError::NonTextual),
         }
     }
 }
@@ -85,10 +94,17 @@ pub trait ProcessesAssets {
 #[derive(Debug)]
 pub enum AssetError {
     /// An asset contained data that wasn't text.
-    NotText,
-    Compilation {
-        message: Text,
-    },
+    NonTextual,
+
+    /// An asset contained data that wasn't binary.
+    NonBinary,
+
+    /// An asset contained data that was malformed.
+    Malformed { message: Text },
+
+    /// An error occurred while compiling an asset
+    /// via a processor.
+    Compilation { message: Text },
 }
 
 #[cfg(test)]
