@@ -2,12 +2,19 @@ use std::path::Path;
 
 use grass::{Options, from_path};
 
-use crate::asset::{Error, ProcessesAssets, media_type::MediaType};
+use crate::asset::{AssetError, ProcessesAssets, media_type::MediaType};
 
+impl From<Box<grass::Error>> for AssetError {
+    fn from(error: Box<grass::Error>) -> Self {
+        AssetError::Compilation {
+            message: error.to_string().into(),
+        }
+    }
+}
 pub struct ScssProcessor {}
 
 impl ProcessesAssets for ScssProcessor {
-    fn process(&self, asset: &mut super::Asset) -> Result<(), Error> {
+    fn process(&self, asset: &mut super::Asset) -> Result<(), AssetError> {
         // Get Path Ref
         let path_text = asset.path().clone();
         let path: &str = path_text.as_ref();

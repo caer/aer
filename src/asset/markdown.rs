@@ -1,11 +1,18 @@
-use markdown::mdast::Node;
+use markdown::{mdast::Node, message::Message};
 
-use crate::asset::{Error, ProcessesAssets, media_type::MediaType};
+use crate::asset::{AssetError, ProcessesAssets, media_type::MediaType};
 
+impl From<Message> for AssetError {
+    fn from(error: Message) -> Self {
+        AssetError::Compilation {
+            message: error.to_string().into(),
+        }
+    }
+}
 pub struct MarkdownProcessor {}
 
 impl ProcessesAssets for MarkdownProcessor {
-    fn process(&self, asset: &mut super::Asset) -> Result<(), Error> {
+    fn process(&self, asset: &mut super::Asset) -> Result<(), AssetError> {
         let text = asset.contents.try_as_mut_text()?;
 
         // Compile markdown into an abstract syntax tree.
