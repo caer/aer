@@ -1,15 +1,22 @@
-use markdown::mdast::Node;
+use markdown::{mdast::Node, message::Message};
 
-use crate::asset::{ProcessesAssets, media_type::MediaType};
+use crate::asset::{AssetError, ProcessesAssets, media_type::MediaType};
 
+impl From<Message> for AssetError {
+    fn from(error: Message) -> Self {
+        AssetError::Compilation {
+            message: error.to_string().into(),
+        }
+    }
+}
 pub struct MarkdownProcessor {}
 
 impl ProcessesAssets for MarkdownProcessor {
-    fn process(&self, asset: &mut super::Asset) {
-        let text = asset.contents.try_as_mut_text().expect("todo");
+    fn process(&self, asset: &mut super::Asset) -> Result<(), AssetError> {
+        let text = asset.contents.try_as_mut_text()?;
 
         // Compile markdown into an abstract syntax tree.
-        let ast = markdown::to_mdast(text, &markdown::ParseOptions::default()).unwrap();
+        let ast = markdown::to_mdast(text, &markdown::ParseOptions::default())?;
 
         // Compile the AST into HTML.
         let mut compiled_html = String::with_capacity(text.len());
@@ -18,6 +25,7 @@ impl ProcessesAssets for MarkdownProcessor {
         // Update the asset's contents and target extension.
         *text.to_mut() = compiled_html;
         asset.media_type = MediaType::Html;
+        Ok(())
     }
 }
 
@@ -254,7 +262,7 @@ mod tests {
                 .to_vec(),
         );
 
-        MarkdownProcessor {}.process(&mut markdown_asset);
+        let _ = MarkdownProcessor {}.process(&mut markdown_asset);
 
         assert_eq!(
             "<h1 id=\"header-1\">Header 1</h1><p>Body</p><Blockquote><p>Quotation in <strong>bold</strong> and <em>italics</em>.</p></Blockquote>",
