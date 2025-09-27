@@ -1,6 +1,9 @@
 use markdown::{mdast::Node, message::Message};
 
-use crate::process::{AssetError, ProcessesAssets, media_type::MediaType};
+use crate::process::{
+    AssetError, ProcessesAssets,
+    asset::{Asset, MediaType},
+};
 
 impl From<Message> for AssetError {
     fn from(error: Message) -> Self {
@@ -12,7 +15,7 @@ impl From<Message> for AssetError {
 pub struct MarkdownProcessor {}
 
 impl ProcessesAssets for MarkdownProcessor {
-    fn process(&self, asset: &mut super::Asset) -> Result<(), AssetError> {
+    fn process(&self, asset: &mut Asset) -> Result<(), AssetError> {
         if *asset.media_type() != MediaType::Markdown {
             tracing::debug!(
                 "skipping asset {}: not markdown {}",

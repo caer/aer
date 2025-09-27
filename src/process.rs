@@ -5,7 +5,6 @@ use crate::process::asset::Asset;
 pub mod asset;
 pub mod image;
 pub mod markdown;
-pub mod media_type;
 pub mod scss;
 
 /// A thing that processes [Asset]s.
@@ -32,7 +31,7 @@ pub enum AssetError {
 
 #[cfg(test)]
 mod tests {
-    use crate::process::media_type::MediaType;
+    use crate::process::asset::MediaType;
 
     use super::*;
 

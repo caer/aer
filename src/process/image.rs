@@ -2,7 +2,10 @@ use std::io::Cursor;
 
 use image::ImageFormat;
 
-use crate::process::{AssetError, ProcessesAssets, media_type::MediaCategory};
+use crate::process::{
+    AssetError, ProcessesAssets,
+    asset::{Asset, MediaCategory},
+};
 
 /// Resizes images to fit within a given width and height,
 /// preserving the image's original aspect ratio.
@@ -23,7 +26,7 @@ pub struct ImageResizeProcessor {
 }
 
 impl ProcessesAssets for ImageResizeProcessor {
-    fn process(&self, asset: &mut super::Asset) -> Result<(), AssetError> {
+    fn process(&self, asset: &mut Asset) -> Result<(), AssetError> {
         // Skip assets that aren't images.
         if asset.media_type().category() != MediaCategory::Image {
             tracing::debug!(

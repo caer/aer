@@ -26,6 +26,7 @@ This file contains a chronological list of all major changes made to this crate.
 - Encapsulate details of assets' contents inside the asset module.
 - Rename asset module to process module
 - Extract asset from proces module
+- Combine the asset and media_type modules
 
 ### 🐛 Fixes
 
