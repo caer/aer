@@ -29,6 +29,7 @@ This file contains a chronological list of all major changes made to this crate.
 - Combine the asset and media_type modules
 - Rename process to proc, which sounds less like an OS process
 - Extract media type from asset again
+- Rename media_type module to asset_type
 
 ### 🐛 Fixes
 

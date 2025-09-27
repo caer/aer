@@ -1,8 +1,6 @@
 use markdown::{mdast::Node, message::Message};
 
-use crate::{MediaType, proc::asset::Asset};
-
-use super::{ProcessesAssets, ProcessingError};
+use super::{Asset, MediaType, ProcessesAssets, ProcessingError};
 
 impl From<Message> for ProcessingError {
     fn from(error: Message) -> Self {

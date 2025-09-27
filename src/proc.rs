@@ -1,11 +1,12 @@
 use codas::types::Text;
 
-pub mod asset;
+mod asset;
+pub use asset::Asset;
+mod asset_type;
+pub use asset_type::{MediaCategory, MediaType};
 pub mod image;
 pub mod markdown;
 pub mod scss;
-
-use asset::Asset;
 
 /// A thing that processes [Asset]s.
 pub trait ProcessesAssets {

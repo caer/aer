@@ -1,8 +1,6 @@
 use codas::types::Text;
 
-use crate::MediaType;
-
-use super::ProcessingError;
+use super::{MediaType, ProcessingError};
 
 /// An in-memory representation of any asset meant for processing.
 #[derive(Clone, Debug)]

@@ -2,9 +2,7 @@ use std::path::Path;
 
 use grass::{Options, from_path};
 
-use crate::{MediaType, proc::asset::Asset};
-
-use super::{ProcessesAssets, ProcessingError};
+use super::{Asset, MediaType, ProcessesAssets, ProcessingError};
 
 impl From<Box<grass::Error>> for ProcessingError {
     fn from(error: Box<grass::Error>) -> Self {

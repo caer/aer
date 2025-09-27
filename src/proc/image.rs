@@ -2,9 +2,7 @@ use std::io::Cursor;
 
 use image::ImageFormat;
 
-use crate::{MediaCategory, proc::asset::Asset};
-
-use super::{ProcessesAssets, ProcessingError};
+use super::{Asset, MediaCategory, ProcessesAssets, ProcessingError};
 
 /// Resizes images to fit within a given width and height,
 /// preserving the image's original aspect ratio.
