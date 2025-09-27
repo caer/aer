@@ -1,6 +1,6 @@
 use codas::types::Text;
 
-use crate::process::asset::Asset;
+use crate::proc::asset::Asset;
 
 pub mod asset;
 pub mod image;
@@ -31,7 +31,7 @@ pub enum AssetError {
 
 #[cfg(test)]
 mod tests {
-    use crate::process::asset::MediaType;
+    use asset::MediaType;
 
     use super::*;
 

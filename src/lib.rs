@@ -1,2 +1,2 @@
-pub mod process;
+pub mod proc;
 pub mod tool;

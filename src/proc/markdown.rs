@@ -1,6 +1,6 @@
 use markdown::{mdast::Node, message::Message};
 
-use crate::process::{
+use super::{
     AssetError, ProcessesAssets,
     asset::{Asset, MediaType},
 };
@@ -260,8 +260,6 @@ fn compile_ast_node_children(node: &Node, compiled_html: &mut String) {
 
 #[cfg(test)]
 mod tests {
-    use crate::process::Asset;
-
     use super::*;
 
     #[test]

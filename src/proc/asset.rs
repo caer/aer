@@ -1,6 +1,6 @@
 use codas::types::Text;
 
-use crate::process::AssetError;
+use super::AssetError;
 
 // Definitions for all media types explicitly supported by this
 // crate, in alphabetical order by their "logical" names

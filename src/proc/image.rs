@@ -2,7 +2,7 @@ use std::io::Cursor;
 
 use image::ImageFormat;
 
-use crate::process::{
+use super::{
     AssetError, ProcessesAssets,
     asset::{Asset, MediaCategory},
 };
@@ -80,7 +80,7 @@ impl ProcessesAssets for ImageResizeProcessor {
 
 #[cfg(test)]
 mod tests {
-    use crate::process::{Asset, ProcessesAssets, image::ImageResizeProcessor};
+    use super::*;
 
     #[test_log::test]
     #[test_log(default_log_filter = "debug")]

@@ -2,7 +2,7 @@ use std::path::Path;
 
 use grass::{Options, from_path};
 
-use crate::process::{
+use super::{
     AssetError, ProcessesAssets,
     asset::{Asset, MediaType},
 };
@@ -43,8 +43,6 @@ impl ProcessesAssets for ScssProcessor {
 
 #[cfg(test)]
 mod tests {
-    use crate::process::Asset;
-
     use super::*;
 
     #[test]
