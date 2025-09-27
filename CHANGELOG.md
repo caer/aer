@@ -31,6 +31,7 @@ This file contains a chronological list of all major changes made to this crate.
 - Extract media type from asset again
 - Rename media_type module to asset_type
 - Relocate media type
+- Rename from to .
 
 ### 🐛 Fixes
 

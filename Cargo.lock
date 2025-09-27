@@ -19,6 +19,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "aer"
+version = "0.1.1"
+dependencies = [
+ "arboard",
+ "codas",
+ "codas-macros",
+ "grass",
+ "image",
+ "markdown",
+ "moxcms",
+ "palette",
+ "ratatui",
+ "test-log",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -307,24 +325,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0abae9be0aaf9ea96a3b1b8b1b55c602ca751eba1b1500220cea4ecbafe7c0d5"
 dependencies = [
  "rustversion",
-]
-
-[[package]]
-name = "cate"
-version = "0.1.1"
-dependencies = [
- "arboard",
- "codas",
- "codas-macros",
- "grass",
- "image",
- "markdown",
- "moxcms",
- "palette",
- "ratatui",
- "test-log",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
