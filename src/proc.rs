@@ -1,7 +1,7 @@
 use codas::types::Text;
 
 mod asset;
-pub use asset::{Asset, MediaType, MediaCategory};
+pub use asset::{Asset, MediaCategory, MediaType};
 pub mod image;
 pub mod markdown;
 pub mod scss;

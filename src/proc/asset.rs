@@ -1,7 +1,7 @@
 use codas::types::Text;
 
 mod media_type;
-pub use media_type::{MediaType, MediaCategory};
+pub use media_type::{MediaCategory, MediaType};
 
 use crate::proc::ProcessingError;
 
