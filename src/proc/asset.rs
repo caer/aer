@@ -1,30 +1,29 @@
 use codas::types::Text;
 
-use super::{MediaType, ProcessingError};
+mod media_type;
+pub use media_type::{MediaType, MediaCategory};
+
+use crate::proc::ProcessingError;
 
 /// An in-memory representation of any asset meant for processing.
 #[derive(Clone, Debug)]
 pub struct Asset {
     /// The asset's logical path, including the asset's name.
     path: Text,
-
-    /// The asset's media type.
-    media_type: MediaType,
-
-    /// The asset's raw contents
-    contents: Option<AssetContents>,
+    content: Option<AssetContent>,
+    content_media_type: MediaType,
 }
 
 impl Asset {
-    /// Returns a new asset with `path` and `contents`.
-    pub fn new(path: Text, contents: Vec<u8>) -> Self {
-        let contents = if contents.is_empty() {
+    /// Returns a new asset with `path` and `content`.
+    pub fn new(path: Text, content: Vec<u8>) -> Self {
+        let contents = if content.is_empty() {
             None
         } else {
             // Try to convert the vector to UTF-8 bytes.
-            Some(match String::from_utf8(contents) {
-                Ok(text) => AssetContents::Textual(text.into()),
-                Err(e) => AssetContents::Binary(e.into_bytes()),
+            Some(match String::from_utf8(content) {
+                Ok(text) => AssetContent::Textual(text.into()),
+                Err(e) => AssetContent::Binary(e.into_bytes()),
             })
         };
 
@@ -33,8 +32,8 @@ impl Asset {
 
         Self {
             path,
-            media_type,
-            contents,
+            content_media_type: media_type,
+            content: contents,
         }
     }
 
@@ -45,47 +44,47 @@ impl Asset {
 
     /// Returns the asset's media type.
     pub fn media_type(&self) -> &MediaType {
-        &self.media_type
+        &self.content_media_type
     }
 
     /// Sets the asset's media type.
     pub fn set_media_type(&mut self, media_type: MediaType) {
-        self.media_type = media_type;
+        self.content_media_type = media_type;
     }
 
-    /// Replaces the assets contents with `bytes` and `media_type`.
+    /// Replaces the assets content with `bytes` and `media_type`.
     pub fn replace_with_bytes(&mut self, bytes: Vec<u8>, media_type: MediaType) {
-        self.contents = Some(AssetContents::Binary(bytes));
-        self.media_type = media_type;
+        self.content = Some(AssetContent::Binary(bytes));
+        self.content_media_type = media_type;
     }
 
-    /// Replaces the assets contents with `text` and `media_type`.
+    /// Replaces the assets content with `text` and `media_type`.
     pub fn replace_with_text(&mut self, text: Text, media_type: MediaType) {
-        self.contents = Some(AssetContents::Textual(text));
-        self.media_type = media_type;
+        self.content = Some(AssetContent::Textual(text));
+        self.content_media_type = media_type;
     }
 
-    /// Returns the asset's contents as immutable bytes.
+    /// Returns the asset's content as immutable bytes.
     pub fn as_bytes(&self) -> &[u8] {
-        match self.contents.as_ref() {
-            Some(AssetContents::Binary(bytes)) => bytes,
-            Some(AssetContents::Textual(text)) => text.as_bytes(),
+        match self.content.as_ref() {
+            Some(AssetContent::Binary(bytes)) => bytes,
+            Some(AssetContent::Textual(text)) => text.as_bytes(),
             None => &[],
         }
     }
 
-    /// Returns the assets contents as immutable text.
+    /// Returns the assets content as immutable text.
     ///
     /// If the asset is empty or contains non-textual data,
     /// this function will fail.
     pub fn as_text(&self) -> Result<&Text, ProcessingError> {
-        match self.contents.as_ref() {
-            Some(AssetContents::Textual(text)) => Ok(text),
+        match self.content.as_ref() {
+            Some(AssetContent::Textual(text)) => Ok(text),
             _ => Err(ProcessingError::NonTextual),
         }
     }
 
-    /// Returns the asset's contents as mutable bytes.
+    /// Returns the asset's content as mutable bytes.
     ///
     /// If the asset is empty, this function will fail.
     ///
@@ -95,16 +94,16 @@ impl Asset {
     /// in place, since the resulting bytes may no longer
     /// represent valid text.
     pub fn as_mut_bytes(&mut self) -> Result<&mut Vec<u8>, ProcessingError> {
-        match &mut self.contents {
-            Some(AssetContents::Binary(bytes)) => Ok(bytes),
+        match &mut self.content {
+            Some(AssetContent::Binary(bytes)) => Ok(bytes),
             _ => Err(ProcessingError::NonBinary),
         }
     }
 }
 
-/// Raw contents of an [Asset].
+/// Raw content of an [Asset].
 #[derive(Clone, Debug)]
-enum AssetContents {
+enum AssetContent {
     Binary(Vec<u8>),
     Textual(Text),
 }
