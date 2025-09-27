@@ -2,14 +2,13 @@ use std::path::Path;
 
 use grass::{Options, from_path};
 
-use super::{
-    AssetError, ProcessesAssets,
-    asset::{Asset, MediaType},
-};
+use crate::{MediaType, proc::asset::Asset};
 
-impl From<Box<grass::Error>> for AssetError {
+use super::{ProcessesAssets, ProcessingError};
+
+impl From<Box<grass::Error>> for ProcessingError {
     fn from(error: Box<grass::Error>) -> Self {
-        AssetError::Compilation {
+        ProcessingError::Compilation {
             message: error.to_string().into(),
         }
     }
@@ -17,7 +16,7 @@ impl From<Box<grass::Error>> for AssetError {
 pub struct ScssProcessor {}
 
 impl ProcessesAssets for ScssProcessor {
-    fn process(&self, asset: &mut Asset) -> Result<(), AssetError> {
+    fn process(&self, asset: &mut Asset) -> Result<(), ProcessingError> {
         if *asset.media_type() != MediaType::Scss {
             tracing::debug!(
                 "skipping asset {}: not SCSS {}",

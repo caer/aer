@@ -2,10 +2,9 @@ use std::io::Cursor;
 
 use image::ImageFormat;
 
-use super::{
-    AssetError, ProcessesAssets,
-    asset::{Asset, MediaCategory},
-};
+use crate::{MediaCategory, proc::asset::Asset};
+
+use super::{ProcessesAssets, ProcessingError};
 
 /// Resizes images to fit within a given width and height,
 /// preserving the image's original aspect ratio.
@@ -26,7 +25,7 @@ pub struct ImageResizeProcessor {
 }
 
 impl ProcessesAssets for ImageResizeProcessor {
-    fn process(&self, asset: &mut Asset) -> Result<(), AssetError> {
+    fn process(&self, asset: &mut Asset) -> Result<(), ProcessingError> {
         // Skip assets that aren't images.
         if asset.media_type().category() != MediaCategory::Image {
             tracing::debug!(
@@ -38,14 +37,16 @@ impl ProcessesAssets for ImageResizeProcessor {
         }
 
         // Extract image bytes.
-        let image_format =
-            ImageFormat::from_path(asset.path().as_str()).map_err(|e| AssetError::Malformed {
+        let image_format = ImageFormat::from_path(asset.path().as_str()).map_err(|e| {
+            ProcessingError::Malformed {
+                message: e.to_string().into(),
+            }
+        })?;
+        let image_bytes = asset.as_mut_bytes()?;
+        let image =
+            image::load_from_memory(image_bytes).map_err(|e| ProcessingError::Malformed {
                 message: e.to_string().into(),
             })?;
-        let image_bytes = asset.as_mut_bytes()?;
-        let image = image::load_from_memory(image_bytes).map_err(|e| AssetError::Malformed {
-            message: e.to_string().into(),
-        })?;
 
         // Skip resizing if the image is already inside the bounding box.
         if image.width() <= self.width && image.height() <= self.height {
@@ -70,7 +71,7 @@ impl ProcessesAssets for ImageResizeProcessor {
         let mut cursor = Cursor::new(image_bytes);
         image
             .write_to(&mut cursor, image_format)
-            .map_err(|e| AssetError::Malformed {
+            .map_err(|e| ProcessingError::Malformed {
                 message: e.to_string().into(),
             })?;
 
