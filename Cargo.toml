@@ -1,11 +1,11 @@
 [package]
 name = "aer"
 description = "A command-line toolkit for creatives."
-version = "0.1.1"
+version = "0.1.0"
 edition = "2024"
 license = "FSL-1.1-MIT"
 readme = "README.md"
-repository = "https://github.com/caer/cate"
+repository = "https://github.com/caer/aer"
 authors = [
     "With Caer, LLC <hi@caer.cc>",
 ]
