@@ -23,6 +23,15 @@ This file contains a chronological list of all major changes made to this crate.
 - Add markdown asset processor
 - Add grass crate to project and implement SCSS to css conversion (#5)
 - Implement Lanczos-based image resizing processor
+- Encapsulate details of assets' contents inside the asset module.
+- Rename asset module to process module
+- Extract asset from proces module
+- Combine the asset and media_type modules
+- Rename process to proc, which sounds less like an OS process
+- Extract media type from asset again
+- Rename media_type module to asset_type
+- Relocate media type
+- Rename from to .
 
 ### 🐛 Fixes
 
@@ -34,6 +43,7 @@ This file contains a chronological list of all major changes made to this crate.
 - Update devcontainer to latest workbench version, and remove redundant ops scripts
 - Move color tooling to sub-module
 - Add Rust CI Job (#7)
+- Fmt
 
 ### 📚 Documentation
 

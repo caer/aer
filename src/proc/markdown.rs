@@ -1,10 +1,10 @@
 use markdown::{mdast::Node, message::Message};
 
-use crate::asset::{AssetError, ProcessesAssets, media_type::MediaType};
+use super::{Asset, MediaType, ProcessesAssets, ProcessingError};
 
-impl From<Message> for AssetError {
+impl From<Message> for ProcessingError {
     fn from(error: Message) -> Self {
-        AssetError::Compilation {
+        ProcessingError::Compilation {
             message: error.to_string().into(),
         }
     }
@@ -12,8 +12,17 @@ impl From<Message> for AssetError {
 pub struct MarkdownProcessor {}
 
 impl ProcessesAssets for MarkdownProcessor {
-    fn process(&self, asset: &mut super::Asset) -> Result<(), AssetError> {
-        let text = asset.contents.try_as_mut_text()?;
+    fn process(&self, asset: &mut Asset) -> Result<(), ProcessingError> {
+        if *asset.media_type() != MediaType::Markdown {
+            tracing::debug!(
+                "skipping asset {}: not markdown {}",
+                asset.path(),
+                asset.media_type().name()
+            );
+            return Ok(());
+        }
+
+        let text = asset.as_text()?;
 
         // Compile markdown into an abstract syntax tree.
         let ast = markdown::to_mdast(text, &markdown::ParseOptions::default())?;
@@ -23,8 +32,7 @@ impl ProcessesAssets for MarkdownProcessor {
         compile_ast_node(None, &ast, &mut compiled_html);
 
         // Update the asset's contents and target extension.
-        *text.to_mut() = compiled_html;
-        asset.media_type = MediaType::Html;
+        asset.replace_with_text(compiled_html.into(), MediaType::Html);
         Ok(())
     }
 }
@@ -249,8 +257,6 @@ fn compile_ast_node_children(node: &Node, compiled_html: &mut String) {
 
 #[cfg(test)]
 mod tests {
-    use crate::asset::Asset;
-
     use super::*;
 
     #[test]
@@ -266,7 +272,9 @@ mod tests {
 
         assert_eq!(
             "<h1 id=\"header-1\">Header 1</h1><p>Body</p><Blockquote><p>Quotation in <strong>bold</strong> and <em>italics</em>.</p></Blockquote>",
-            markdown_asset.contents.try_as_mut_text().unwrap()
+            markdown_asset.as_text().unwrap()
         );
+
+        assert_eq!(&MediaType::Html, markdown_asset.media_type());
     }
 }

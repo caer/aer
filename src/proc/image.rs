@@ -2,7 +2,7 @@ use std::io::Cursor;
 
 use image::ImageFormat;
 
-use crate::asset::{AssetError, ProcessesAssets, media_type::MediaCategory};
+use super::{Asset, MediaCategory, ProcessesAssets, ProcessingError};
 
 /// Resizes images to fit within a given width and height,
 /// preserving the image's original aspect ratio.
@@ -23,26 +23,28 @@ pub struct ImageResizeProcessor {
 }
 
 impl ProcessesAssets for ImageResizeProcessor {
-    fn process(&self, asset: &mut super::Asset) -> Result<(), AssetError> {
+    fn process(&self, asset: &mut Asset) -> Result<(), ProcessingError> {
         // Skip assets that aren't images.
-        if asset.media_type.category() != MediaCategory::Image {
+        if asset.media_type().category() != MediaCategory::Image {
             tracing::debug!(
                 "skipping asset {}: not an image: {}",
                 asset.path(),
-                asset.media_type.name()
+                asset.media_type().name()
             );
             return Ok(());
         }
 
         // Extract image bytes.
-        let image_format =
-            ImageFormat::from_path(asset.path().as_str()).map_err(|e| AssetError::Malformed {
+        let image_format = ImageFormat::from_path(asset.path().as_str()).map_err(|e| {
+            ProcessingError::Malformed {
+                message: e.to_string().into(),
+            }
+        })?;
+        let image_bytes = asset.as_mut_bytes()?;
+        let image =
+            image::load_from_memory(image_bytes).map_err(|e| ProcessingError::Malformed {
                 message: e.to_string().into(),
             })?;
-        let image_bytes = asset.contents.try_as_mut_bytes()?;
-        let image = image::load_from_memory(image_bytes).map_err(|e| AssetError::Malformed {
-            message: e.to_string().into(),
-        })?;
 
         // Skip resizing if the image is already inside the bounding box.
         if image.width() <= self.width && image.height() <= self.height {
@@ -67,7 +69,7 @@ impl ProcessesAssets for ImageResizeProcessor {
         let mut cursor = Cursor::new(image_bytes);
         image
             .write_to(&mut cursor, image_format)
-            .map_err(|e| AssetError::Malformed {
+            .map_err(|e| ProcessingError::Malformed {
                 message: e.to_string().into(),
             })?;
 
@@ -77,7 +79,7 @@ impl ProcessesAssets for ImageResizeProcessor {
 
 #[cfg(test)]
 mod tests {
-    use crate::asset::{Asset, ProcessesAssets, image::ImageResizeProcessor};
+    use super::*;
 
     #[test_log::test]
     #[test_log(default_log_filter = "debug")]
@@ -99,7 +101,7 @@ mod tests {
             .unwrap();
 
         // Check the dimensions of the resized image.
-        let resized_image = image::load_from_memory(asset.contents.as_bytes()).unwrap();
+        let resized_image = image::load_from_memory(asset.as_bytes()).unwrap();
         assert_eq!(width, resized_image.width());
         assert_eq!(243, resized_image.height());
     }

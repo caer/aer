@@ -1,7 +1,7 @@
 use std::time::Duration;
 
+use aer::tool::color::Neutrals;
 use arboard::Clipboard;
-use cate::tool::color::Neutrals;
 use ratatui::{
     DefaultTerminal,
     buffer::Buffer,
@@ -47,7 +47,7 @@ struct App {
 #[derive(Debug, Default)]
 struct ColorsWidget {
     /// The base neutral color from which all neutral tones are derived.
-    base_neutral_color: cate::tool::color::Color,
+    base_neutral_color: aer::tool::color::Color,
 
     /// The chromaticity of the base accent color.
     base_accent_chromaticity: f32,
@@ -69,7 +69,7 @@ impl App {
     /// This is the main event loop for the app.
     pub fn run(mut self, mut terminal: DefaultTerminal) -> std::io::Result<()> {
         self.colors_widget.base_neutral_color =
-            cate::tool::color::Color::try_from_hex(DEFAULT_NEUTRAL_COLOR.into()).unwrap();
+            aer::tool::color::Color::try_from_hex(DEFAULT_NEUTRAL_COLOR.into()).unwrap();
         self.colors_widget.base_accent_chromaticity = self
             .colors_widget
             .base_neutral_color
@@ -330,7 +330,7 @@ impl Widget for &mut ColorsWidget {
 
 /// Fills `area` and `buff` with a block of `color`, overlaying
 /// metadata about the color if there's enough space.
-fn render_color_block(area: Rect, buff: &mut Buffer, color: &cate::tool::color::Color) {
+fn render_color_block(area: Rect, buff: &mut Buffer, color: &aer::tool::color::Color) {
     let fg_color = if color.l >= 0.5 {
         Color::Black
     } else {

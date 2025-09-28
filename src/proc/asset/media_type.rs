@@ -1,16 +1,14 @@
-/// Collection of all media or "MIME" types that
-/// are _explicitly_ supported by asset procesors.
-///
-/// See: https://www.iana.org/assignments/media-types/media-types.xhtml
 use codas::types::Text;
 
-// Definitions for all media types explicitly supported by this
-// crate, in alphabetical order by their "logical" names
+// Definitions for all asset media types explicitly supported for
+// processing, in alphabetical order by their "logical" names
 // (e.g., "Css" comes before "Markdown").
 //
 // Each media type is a tuple of `(name, mime_type, [extensions])`.
 // Extensions should be ordered, roughly, in terms of how common the
 // extension is (i.e., more common extensions come first).
+//
+// See: https://www.iana.org/assignments/media-types/media-types.xhtml
 macros::media_types! {
     (Css, "text/css", ["css"]),
     (Gif, "image/gif", ["gif"]),
@@ -82,7 +80,7 @@ mod macros {
             ),+ $(,)?
         ) => {
 
-            /// Supported Media or "MIME" types.
+            /// Media or "MIME" types of an asset.
             ///
             /// This enumeration of types is not a complete list of all
             /// media types: Only those types explicitly supported by this
