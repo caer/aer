@@ -5,6 +5,7 @@ pub use asset::{Asset, MediaCategory, MediaType};
 pub mod image;
 pub mod markdown;
 pub mod scss;
+pub mod template;
 
 /// A thing that processes [Asset]s.
 pub trait ProcessesAssets {

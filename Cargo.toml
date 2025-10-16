@@ -20,6 +20,8 @@ codas-macros = "0.5.1"
 grass = "0.13.4"
 # Image processing.
 image = { version = "0.25.8", default-features = false, features = ["rayon", "jpeg", "png", "gif", "ico", "webp"] }
+# Template processing.
+logos = "0.15.1"
 # Markdown processing.
 markdown = "1.0.0-alpha.21"
 # ICC color profiles

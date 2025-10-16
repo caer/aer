@@ -28,4 +28,4 @@ In addition to the interactive color picker, the `aer` crate exposes a collectio
 Copyright © 2025 With Caer, LLC.
 
 Licensed under the Functional Source License, Version 1.1, MIT Future License.
-Refer to [the license file](LICENSE.txt) for more info.
+Refer to [the license file](LICENSE.md) for more info.
