@@ -23,10 +23,6 @@ enum TemplateToken {
     #[regex(r#""([^"\\]|\\.)*""#)]
     String,
 
-    /// Negates a conditional.
-    #[token(r#"!"#)]
-    Negation,
-
     /// Opening paren of a function call.
     #[token(r#"("#)]
     OpenParen,
@@ -70,136 +66,117 @@ pub enum TemplateExpression {
 fn parse_template_expression(lexer: &mut Lexer<Token>) -> Result<TemplateExpression, String> {
     let mut template_lexer = lexer.clone().morph::<TemplateToken>();
 
-    // The first token must be an identifier.
-    let identifier = match template_lexer.next() {
-        Some(Ok(TemplateToken::Identifier)) => template_lexer.slice(),
-        _ => {
-            *lexer = template_lexer.morph();
-            return Err("template expression must start with an identifier".to_string());
-        }
-    };
-
-    match identifier {
-        // An if block.
-        "if" => {
-            let mut negated = false;
-
-            let identifier = match template_lexer.next() {
-                Some(Ok(TemplateToken::Negation)) => {
-                    negated = true;
-                    match template_lexer.next() {
+    // The first token must be an identifier or a function call.
+    match template_lexer.next() {
+        // If it's an identifier, then the expression is either
+        // a variable or a block (if, for, end).
+        Some(Ok(TemplateToken::Identifier)) => {
+            let identifier = template_lexer.slice();
+            match identifier {
+                "if" => {
+                    // The next token must be an identifier.
+                    let identifier = match template_lexer.next() {
                         Some(Ok(TemplateToken::Identifier)) => template_lexer.slice(),
                         _ => {
                             *lexer = template_lexer.morph();
-                            return Err("expected identifier after negation".to_string());
+                            return Err("expected identifier after `if`".to_string());
+                        }
+                    };
+
+                    check_exit_token(lexer, template_lexer)?;
+                    Ok(TemplateExpression::IfBlock {
+                        expression: Box::new(TemplateExpression::Variable {
+                            name: identifier.into(),
+                        }),
+                        negated: false,
+                    })
+                }
+                "for" => {
+                    // The next token must be an identifier.
+                    let identifier = match template_lexer.next() {
+                        Some(Ok(TemplateToken::Identifier)) => template_lexer.slice(),
+                        _ => {
+                            *lexer = template_lexer.morph();
+                            return Err("expected identifier after `if`".to_string());
+                        }
+                    };
+
+                    // The next token must be "in".
+                    match template_lexer.next() {
+                        Some(Ok(TemplateToken::Identifier)) if template_lexer.slice() == "in" => {}
+                        _ => {
+                            *lexer = template_lexer.morph();
+                            return Err("expected 'in' after loop variable".to_string());
                         }
                     }
+
+                    // The next token must be the iterable identifier.
+                    let iterable = match template_lexer.next() {
+                        Some(Ok(TemplateToken::Identifier)) => TemplateExpression::Variable {
+                            name: template_lexer.slice().into(),
+                        },
+                        _ => {
+                            *lexer = template_lexer.morph();
+                            return Err("expected identifier after 'in'".to_string());
+                        }
+                    };
+
+                    check_exit_token(lexer, template_lexer)?;
+                    Ok(TemplateExpression::ForBlock {
+                        loop_variable: identifier.into(),
+                        iterable: Box::new(iterable),
+                    })
                 }
+                "end" => {
+                    check_exit_token(lexer, template_lexer)?;
+                    Ok(TemplateExpression::EndBlock)
+                }
+                variable => {
+                    check_exit_token(lexer, template_lexer)?;
+                    Ok(TemplateExpression::Variable {
+                        name: variable.into(),
+                    })
+                }
+            }
+        }
+
+        // If it's an open paren, then the expression is a function call.
+        Some(Ok(TemplateToken::OpenParen)) => {
+            // The next token must be the function name identifier.
+            let identifier = match template_lexer.next() {
                 Some(Ok(TemplateToken::Identifier)) => template_lexer.slice(),
                 _ => {
                     *lexer = template_lexer.morph();
-                    return Err("expected identifier or negation after if".to_string());
+                    return Err("expected function name after `(`".to_string());
                 }
             };
 
-            check_exit_token(lexer, template_lexer)?;
-            Ok(TemplateExpression::IfBlock {
-                expression: Box::new(TemplateExpression::Variable {
-                    name: identifier.into(),
-                }),
-                negated,
-            })
-        }
-
-        // A for .. in .. loop.
-        "for" => {
-            // The next token must be the loop variable identifier.
-            let loop_variable = match template_lexer.next() {
-                Some(Ok(TemplateToken::Identifier)) => template_lexer.slice().into(),
-                _ => {
-                    *lexer = template_lexer.morph();
-                    return Err("expected identifier after for".to_string());
-                }
-            };
-
-            // The next token must be "in".
-            match template_lexer.next() {
-                Some(Ok(TemplateToken::Identifier)) if template_lexer.slice() == "in" => {}
-                _ => {
-                    *lexer = template_lexer.morph();
-                    return Err("expected 'in' after loop variable".to_string());
-                }
-            }
-
-            // The next token must be the iterable identifier.
-            let iterable = match template_lexer.next() {
-                Some(Ok(TemplateToken::Identifier)) => TemplateExpression::Variable {
-                    name: template_lexer.slice().into(),
-                },
-                _ => {
-                    *lexer = template_lexer.morph();
-                    return Err("expected identifier after 'in'".to_string());
-                }
-            };
-
-            check_exit_token(lexer, template_lexer)?;
-            Ok(TemplateExpression::ForBlock {
-                loop_variable,
-                iterable: Box::new(iterable),
-            })
-        }
-
-        // End of a block.
-        "end" => {
-            check_exit_token(lexer, template_lexer)?;
-            Ok(TemplateExpression::EndBlock)
-        }
-
-        // A variable or function identifier.
-        identifier => {
-            match template_lexer.next() {
-                // A function call.
-                Some(Ok(TemplateToken::OpenParen)) => {
-                    let mut args = vec![];
-
-                    while let Some(Ok(token)) = template_lexer.next() {
-                        match token {
-                            TemplateToken::Identifier | TemplateToken::String => {
-                                args.push(template_lexer.slice().into());
-                            }
-                            TemplateToken::CloseParen => break,
-                            _ => {
-                                *lexer = template_lexer.morph();
-                                return Err(
-                                    "unexpected token in function argument list".to_string()
-                                );
-                            }
-                        }
+            // The following tokens up to the closing paren must be
+            // function arguments (identifiers or string literals).
+            let mut args = vec![];
+            while let Some(Ok(token)) = template_lexer.next() {
+                match token {
+                    TemplateToken::Identifier | TemplateToken::String => {
+                        args.push(template_lexer.slice().into());
                     }
-
-                    check_exit_token(lexer, template_lexer)?;
-                    Ok(TemplateExpression::FunctionCall {
-                        name: identifier.into(),
-                        args,
-                    })
-                }
-
-                // A simple variable.
-                Some(Ok(TemplateToken::ExitTemplate)) => {
-                    *lexer = template_lexer.morph();
-                    Ok(TemplateExpression::Variable {
-                        name: identifier.into(),
-                    })
-                }
-                _ => {
-                    let message = format!(
-                        "expected closing brace `}}`; got {}",
-                        template_lexer.slice()
-                    );
-                    *lexer = template_lexer.morph();
-                    Err(message)
+                    TemplateToken::CloseParen => break,
+                    _ => {
+                        *lexer = template_lexer.morph();
+                        return Err("unexpected token in function argument list".to_string());
+                    }
                 }
             }
+
+            check_exit_token(lexer, template_lexer)?;
+            Ok(TemplateExpression::FunctionCall {
+                name: identifier.into(),
+                args,
+            })
+        }
+
+        _ => {
+            *lexer = template_lexer.morph();
+            Err("template expression must start with an identifier or function call".to_string())
         }
     }
 }
@@ -245,7 +222,7 @@ mod tests {
 
     #[test]
     fn lexes_function_calls() {
-        let mut lexer = Token::lexer(r#"~{ concat("hello" " " "world") }"#);
+        let mut lexer = Token::lexer(r#"~{ (concat "hello" " " "world") }"#);
         assert_eq!(
             lexer.next(),
             Some(Ok(Token::Template(Ok(TemplateExpression::FunctionCall {
@@ -266,19 +243,6 @@ mod tests {
                     name: "is_empty".into(),
                 }),
                 negated: false,
-            }))))
-        );
-        assert_eq!(lexer.next(), None);
-
-        // Negated condition.
-        let mut lexer = Token::lexer(r#"~{ if !is_empty }"#);
-        assert_eq!(
-            lexer.next(),
-            Some(Ok(Token::Template(Ok(TemplateExpression::IfBlock {
-                expression: Box::new(TemplateExpression::Variable {
-                    name: "is_empty".into(),
-                }),
-                negated: true,
             }))))
         );
         assert_eq!(lexer.next(), None);
