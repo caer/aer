@@ -39,8 +39,8 @@ enum TemplateToken {
 /// A template expression parsed from a series of [TemplateToken]s.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum TemplateExpression {
-    /// A variable identifier.
-    Variable { name: Text },
+    /// An identifier representing a variable on the template context.
+    Identifier { name: Text },
 
     /// A function call with a list of string arguments.
     FunctionCall { name: Text, args: Vec<Text> },
@@ -78,7 +78,7 @@ fn parse_template_expression(lexer: &mut Lexer<Token>) -> Result<TemplateExpress
                     let identifier = take_next_identifier(&mut template_lexer, "if")?;
                     check_exit_token(lexer, template_lexer)?;
                     Ok(TemplateExpression::IfBlock {
-                        expression: Box::new(TemplateExpression::Variable {
+                        expression: Box::new(TemplateExpression::Identifier {
                             name: identifier.into(),
                         }),
                         negated: false,
@@ -101,7 +101,7 @@ fn parse_template_expression(lexer: &mut Lexer<Token>) -> Result<TemplateExpress
                     check_exit_token(lexer, template_lexer)?;
                     Ok(TemplateExpression::ForBlock {
                         loop_variable: identifier.into(),
-                        iterable: Box::new(TemplateExpression::Variable {
+                        iterable: Box::new(TemplateExpression::Identifier {
                             name: iterable.into(),
                         }),
                     })
@@ -112,7 +112,7 @@ fn parse_template_expression(lexer: &mut Lexer<Token>) -> Result<TemplateExpress
                 }
                 variable => {
                     check_exit_token(lexer, template_lexer)?;
-                    Ok(TemplateExpression::Variable {
+                    Ok(TemplateExpression::Identifier {
                         name: variable.into(),
                     })
                 }
@@ -150,8 +150,8 @@ fn parse_template_expression(lexer: &mut Lexer<Token>) -> Result<TemplateExpress
     }
 }
 
-/// Takes the next token off of `template_lexer` and returns `Ok` iff it is
-/// a [TemplateToken::Identifier].
+/// Takes the next token off of `template_lexer` and
+/// returns `Ok` iff it is a [TemplateToken::Identifier].
 fn take_next_identifier<'a>(
     template_lexer: &mut Lexer<'a, TemplateToken>,
     after_token: &str,
@@ -195,7 +195,7 @@ mod tests {
         let mut lexer = Token::lexer(r#"~{ super_dup3r_variable }"#);
         assert_eq!(
             lexer.next(),
-            Some(Ok(Token::Template(Ok(TemplateExpression::Variable {
+            Some(Ok(Token::Template(Ok(TemplateExpression::Identifier {
                 name: "super_dup3r_variable".into(),
             }))))
         );
@@ -221,7 +221,7 @@ mod tests {
         assert_eq!(
             lexer.next(),
             Some(Ok(Token::Template(Ok(TemplateExpression::IfBlock {
-                expression: Box::new(TemplateExpression::Variable {
+                expression: Box::new(TemplateExpression::Identifier {
                     name: "is_empty".into(),
                 }),
                 negated: false,
@@ -237,7 +237,7 @@ mod tests {
             lexer.next(),
             Some(Ok(Token::Template(Ok(TemplateExpression::ForBlock {
                 loop_variable: "item".into(),
-                iterable: Box::new(TemplateExpression::Variable {
+                iterable: Box::new(TemplateExpression::Identifier {
                     name: "items".into(),
                 }),
             }))))

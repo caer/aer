@@ -50,7 +50,7 @@ impl TemplateProcessor {
                 // Evaluate the expression.
                 Ok(Token::Template(Ok(expression))) => {
                     match expression {
-                        TemplateExpression::Variable { name } => {
+                        TemplateExpression::Identifier { name } => {
                             let value = self
                                 .context
                                 .get(&name)
@@ -66,19 +66,17 @@ impl TemplateProcessor {
                             expression,
                             negated,
                         } => {
-                            // @caer: todo: We assume if blocks can only contain variable references. Is that a valid assumption?
-                            let variable_value = match *expression {
-                                TemplateExpression::Variable { name } => {
+                            // @caer: todo: We assume if blocks can only contain identifier references. Is that a valid assumption?
+                            let identifier = match *expression {
+                                TemplateExpression::Identifier { name } => {
                                     self.context.get(&name).cloned()
                                 }
                                 _ => None,
                             };
 
-                            // A variable is "truthy" if it exists and is not "false" or "0".
-                            let mut truthy = !matches!(
-                                variable_value.as_deref(),
-                                Some("false") | Some("0") | None
-                            );
+                            // A variable reference is "truthy" if it exists and is not "false" or "0".
+                            let mut truthy =
+                                !matches!(identifier.as_deref(), Some("false") | Some("0") | None);
 
                             // Invert the truthiness if the condition is negated.
                             if negated {
