@@ -1,5 +1,20 @@
 This file contains a chronological list of all major changes made to this crate.
 
+## Unreleased Changes
+
+### 🚀 Features
+
+- Add tokenizer/lexer for ~{..} style templates.
+- Partially implement template processor
+- This is what we in the industry call a mess
+
+### Other Changes
+
+- Extract template tokenizers into separate module
+- Modify tokenizer to use S-expressions for function calls
+- Add utility for taking identifier tokens
+- Rename TemplateExpression::Variable to ::Identifier
+
 ## [0.1.0] - 2025-09-28
 
 ### 🚀 Features

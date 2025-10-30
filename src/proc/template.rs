@@ -7,10 +7,36 @@ use crate::proc::{Asset, MediaCategory, ProcessesAssets, ProcessingError};
 
 mod tokenizer;
 
-use tokenizer::{TemplateExpression, Token};
+use tokenizer::{TemplateFunctionExpression, Token};
 
 /// Processes text assets containing template expressions wrapped in
 /// `~{ }`, drawing values from a context of key-value pairs.
+///
+/// # Example
+///
+/// Given a context containing `name = 'Aer', admin = 'true', users = []`, this template:
+///
+/// ```html
+/// <div> Hi ~{# name}! It's ~{date}.</div>
+/// ~{if admin}:
+///     <p> You're an administrator, btw.</p>
+///     <ul>
+///     ~{for user in users}:
+///         <li> ~{user} </li>
+///     ~{endfor}
+///     </ul>
+/// ~{else}:
+///     <p> You're not an administrator.</p>
+/// ~{endif}
+/// ```
+///
+/// would compile to:
+///
+/// ```html
+/// <div> Hi Aer! It's [YYYY-MM-DD].</div>
+/// <p> You're an administrator, btw.</p>
+/// <ul></ul>
+/// ```
 pub struct TemplateProcessor {
     /// Context containing variables that can be used by templates.
     context: BTreeMap<Text, Text>,
@@ -38,6 +64,10 @@ impl ProcessesAssets for TemplateProcessor {
 }
 
 impl TemplateProcessor {
+    pub fn new(context: BTreeMap<Text, Text>) -> Self {
+        Self { context }
+    }
+
     /// Compiles a text template containing zero or more [TemplateExpression]s,
     /// appending the compiled results to `output`.
     fn compile_template(
@@ -49,6 +79,24 @@ impl TemplateProcessor {
             match token {
                 // Evaluate the expression.
                 Ok(Token::Template(Ok(expression))) => {
+                    match expression.name.as_str() {
+                        "#" => {
+                            let value = self
+                                .context
+                                .get(&name)
+                                .cloned()
+                                .unwrap_or_else(|| format!("~{{ {name} }}~").into())
+                                .to_string();
+                            output.push_str(&value);
+                        }
+                        _ => {
+                            let message = format!("unknown template function: {}", expression.name);
+                            return Err(ProcessingError::Compilation {
+                                message: message.into(),
+                            });
+                        }
+                    }
+
                     match expression {
                         TemplateExpression::Identifier { name } => {
                             let value = self
@@ -60,43 +108,27 @@ impl TemplateProcessor {
                             output.push_str(&value);
                         }
 
-                        TemplateExpression::FunctionCall { .. } => todo!(),
-
-                        TemplateExpression::IfBlock {
-                            expression,
-                            negated,
-                        } => {
-                            // @caer: todo: We assume if blocks can only contain identifier references. Is that a valid assumption?
-                            let identifier = match *expression {
-                                TemplateExpression::Identifier { name } => {
-                                    self.context.get(&name).cloned()
-                                }
-                                _ => None,
-                            };
+                        TemplateExpression::Function { name, args, block } if name == "if" => {
+                            let identifier = self.context.get(&args[0]).cloned();
 
                             // A variable reference is "truthy" if it exists and is not "false" or "0".
-                            let mut truthy =
+                            let truthy =
                                 !matches!(identifier.as_deref(), Some("false") | Some("0") | None);
 
-                            // Invert the truthiness if the condition is negated.
-                            if negated {
-                                truthy = !truthy;
-                            }
-
                             // If the condition is truthy, compile the contents of the block.
+                            let block_span = Self::traverse_template_block(lexer)?;
                             if truthy {
-                                let block_span = Self::traverse_template_block(lexer)?;
                                 let block_text = &lexer.source()[block_span];
                                 let mut block_lexer = Token::lexer(block_text);
                                 self.compile_template(&mut block_lexer, output)?;
                             }
                         }
 
-                        TemplateExpression::ForBlock { .. } => todo!(),
+                        TemplateExpression::Function { name, args, block } if name == "for" => {
+                            todo!()
+                        }
 
-                        // An end block terminates compilation, but only
-                        // if we're inside of a block.
-                        TemplateExpression::EndBlock => {
+                        TemplateExpression::Function { name, args, block } if name == "end" => {
                             if lexer.span().start == 0 {
                                 return Err(ProcessingError::Compilation {
                                     message: "unexpected end-of-block".into(),
@@ -104,6 +136,13 @@ impl TemplateProcessor {
                             } else {
                                 break;
                             }
+                        }
+
+                        TemplateExpression::Function { name, .. } => {
+                            let message = format!("unknown template function: {name}");
+                            return Err(ProcessingError::Compilation {
+                                message: message.into(),
+                            });
                         }
                     };
                 }
@@ -148,11 +187,12 @@ impl TemplateProcessor {
 
         while let Some(token) = lexer.next() {
             match token {
-                Ok(Token::Template(Ok(TemplateExpression::IfBlock { .. })))
-                | Ok(Token::Template(Ok(TemplateExpression::ForBlock { .. }))) => {
+                Ok(Token::Template(Ok(TemplateExpression::Function { block, .. }))) if block => {
                     let _ = Self::traverse_template_block(lexer)?;
                 }
-                Ok(Token::Template(Ok(TemplateExpression::EndBlock))) => {
+                Ok(Token::Template(Ok(TemplateExpression::Function { name, .. })))
+                    if name == "end" =>
+                {
                     return Ok(start..lexer.span().end);
                 }
                 _ => {}
@@ -180,15 +220,13 @@ mod tests {
     fn processes_if_template() {
         let mut asset = Asset::new(
             "test.html".into(),
-            r#"~{ if is_empty }This is empty!~{ end }"#.trim().as_bytes().to_vec(),
+            r#"~{ (if is_empty) }This is empty!~{ (end) }"#.trim().as_bytes().to_vec(),
         );
         asset.set_media_type(MediaType::Html);
 
-        TemplateProcessor {
-            context: [("is_empty".into(), "true".into())].into(),
-        }
-        .process(&mut asset)
-        .unwrap();
+        TemplateProcessor::new([("is_empty".into(), "true".into())].into())
+            .process(&mut asset)
+            .unwrap();
 
         assert_eq!(r#"This is empty!"#, asset.as_text().unwrap());
     }
