@@ -39,9 +39,7 @@ impl Default for JsBundleProcessor {
 impl JsBundleProcessor {
     /// Creates a new JS bundle processor with default settings.
     pub fn new() -> Self {
-        Self {
-            minify: false,
-        }
+        Self { minify: false }
     }
 
     /// Enables minification of the bundled output.
@@ -61,7 +59,8 @@ impl JsBundleProcessor {
                 message: format!(
                     "Invalid entry path '{}': must be a file path, not a directory or root",
                     entry_path.display()
-                ).into(),
+                )
+                .into(),
             })?;
 
         // Use the entry point's parent directory as the working directory
@@ -98,9 +97,12 @@ impl JsBundleProcessor {
                 message: format!("Failed to create bundler: {:?}", e).into(),
             })?;
 
-            let output = bundler.generate().await.map_err(|e| ProcessingError::Compilation {
-                message: format!("Bundling failed: {:?}", e).into(),
-            })?;
+            let output = bundler
+                .generate()
+                .await
+                .map_err(|e| ProcessingError::Compilation {
+                    message: format!("Bundling failed: {:?}", e).into(),
+                })?;
 
             // Extract the bundled code from the first chunk.
             for asset in output.assets {
@@ -138,10 +140,7 @@ impl ProcessesAssets for JsBundleProcessor {
         // Update the asset's contents with the bundled code.
         asset.replace_with_text(bundled_code.into(), MediaType::JavaScript);
 
-        tracing::info!(
-            "Bundled JavaScript from: {}",
-            entry_path.display()
-        );
+        tracing::info!("Bundled JavaScript from: {}", entry_path.display());
 
         Ok(())
     }
@@ -153,8 +152,7 @@ mod tests {
 
     #[test]
     fn creates_processor_with_minify() {
-        let processor = JsBundleProcessor::new()
-            .with_minify(true);
+        let processor = JsBundleProcessor::new().with_minify(true);
 
         assert!(processor.minify);
     }
@@ -183,22 +181,17 @@ mod tests {
         let processor = JsBundleProcessor::new();
 
         // Create a JavaScript asset pointing to our test file.
-        let mut js_asset = Asset::new(
-            "test/js_bundle/entry.js".into(),
-            "".as_bytes().to_vec(),
-        );
+        let mut js_asset = Asset::new("test/js_bundle/entry.js".into(), "".as_bytes().to_vec());
 
         // Process the asset.
         let result = processor.process(&mut js_asset);
         assert!(result.is_ok());
 
-        // Check that the bundled code contains content from the entry point.
+        // Check that the bundled code contains content from the entry point
+        // and the imported modules.
         let bundled = js_asset.as_text().unwrap();
         assert!(bundled.contains("Hello from bundled JavaScript!"));
         assert!(bundled.contains("greet"));
-
-        // Verify that content from the imported helper module is also bundled.
-        // This confirms the bundler is actually resolving and including dependencies.
         assert!(bundled.contains("HELPER_VERSION"));
         assert!(bundled.contains("formatMessage"));
     }
