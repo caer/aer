@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use brk_rolldown::{Bundler, BundlerOptions};
 use brk_rolldown_common::Output;
@@ -12,6 +12,9 @@ use super::{Asset, MediaType, ProcessesAssets, ProcessingError};
 /// [brk_rolldown](https://crates.io/crates/brk_rolldown) to bundle
 /// JavaScript modules, similar to tools like webpack or rollup.
 ///
+/// Each asset passed to this processor is treated as a distinct entry point,
+/// and modules are resolved relative to that entry point's location.
+///
 /// # Example
 ///
 /// ```ignore
@@ -23,10 +26,6 @@ use super::{Asset, MediaType, ProcessesAssets, ProcessingError};
 /// processor.process(&mut asset).unwrap();
 /// ```
 pub struct JsBundleProcessor {
-    /// Optional working directory for module resolution.
-    /// If not set, uses the parent directory of the entry point.
-    cwd: Option<PathBuf>,
-
     /// Whether to minify the output.
     minify: bool,
 }
@@ -41,15 +40,8 @@ impl JsBundleProcessor {
     /// Creates a new JS bundle processor with default settings.
     pub fn new() -> Self {
         Self {
-            cwd: None,
             minify: false,
         }
-    }
-
-    /// Sets the working directory for module resolution.
-    pub fn with_cwd(mut self, cwd: impl AsRef<Path>) -> Self {
-        self.cwd = Some(cwd.as_ref().to_path_buf());
-        self
     }
 
     /// Enables minification of the bundled output.
@@ -59,21 +51,18 @@ impl JsBundleProcessor {
     }
 
     /// Bundles the JavaScript file at `entry_path` and returns the bundled code.
+    ///
+    /// Modules are resolved relative to the entry point's parent directory.
     fn bundle_js(&self, entry_path: &Path) -> Result<String, ProcessingError> {
-        // Determine working directory.
-        let cwd = self.cwd.clone().or_else(|| {
-            entry_path.parent().map(|p| p.to_path_buf())
-        });
+        // Use the entry point's parent directory as the working directory
+        // for module resolution.
+        let cwd = entry_path.parent().map(|p| p.to_path_buf());
 
-        // Convert entry path to a relative path if we have a cwd.
-        let input_path = if let Some(ref cwd) = cwd {
-            entry_path
-                .strip_prefix(cwd)
-                .map(|p| format!("./{}", p.display()))
-                .unwrap_or_else(|_| entry_path.display().to_string())
-        } else {
-            entry_path.display().to_string()
-        };
+        // Get the entry point filename for the bundler input.
+        let input_path = entry_path
+            .file_name()
+            .map(|f| format!("./{}", f.to_string_lossy()))
+            .unwrap_or_else(|| entry_path.display().to_string());
 
         // Create bundler options.
         let options = BundlerOptions {
@@ -88,6 +77,8 @@ impl JsBundleProcessor {
         };
 
         // Create a new runtime for the async bundling operation.
+        // Note: brk_rolldown is built on rolldown which uses async internally,
+        // so we need a runtime to execute the bundling operation.
         let rt = tokio::runtime::Runtime::new().map_err(|e| ProcessingError::Compilation {
             message: format!("Failed to create async runtime: {}", e).into(),
         })?;
@@ -152,12 +143,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn creates_processor() {
+    fn creates_processor_with_minify() {
         let processor = JsBundleProcessor::new()
-            .with_cwd("/tmp/project")
             .with_minify(true);
 
-        assert_eq!(processor.cwd.unwrap().to_str().unwrap(), "/tmp/project");
         assert!(processor.minify);
     }
 
@@ -165,7 +154,6 @@ mod tests {
     fn creates_default_processor() {
         let processor = JsBundleProcessor::default();
 
-        assert!(processor.cwd.is_none());
         assert!(!processor.minify);
     }
 
