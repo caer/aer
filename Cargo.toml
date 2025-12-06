@@ -24,6 +24,11 @@ image = { version = "0.25.8", default-features = false, features = ["rayon", "jp
 logos = "0.15.1"
 # Markdown processing.
 markdown = "1.0.0-alpha.21"
+# JavaScript bundling.
+brk_rolldown = "0.2.3"
+brk_rolldown_common = "0.2.3"
+# Async runtime (required by brk_bundler)
+tokio = { version = "1.48.0", features = ["rt-multi-thread"] }
 # ICC color profiles
 moxcms = "0.7.2"
 # Colorspaces
