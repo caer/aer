@@ -192,9 +192,14 @@ mod tests {
         let result = processor.process(&mut js_asset);
         assert!(result.is_ok());
 
-        // Check that the bundled code contains our original content.
+        // Check that the bundled code contains content from the entry point.
         let bundled = js_asset.as_text().unwrap();
         assert!(bundled.contains("Hello from bundled JavaScript!"));
         assert!(bundled.contains("greet"));
+
+        // Verify that content from the imported helper module is also bundled.
+        // This confirms the bundler is actually resolving and including dependencies.
+        assert!(bundled.contains("HELPER_VERSION"));
+        assert!(bundled.contains("formatMessage"));
     }
 }
