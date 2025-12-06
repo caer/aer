@@ -54,15 +54,24 @@ impl JsBundleProcessor {
     ///
     /// Modules are resolved relative to the entry point's parent directory.
     fn bundle_js(&self, entry_path: &Path) -> Result<String, ProcessingError> {
-        // Use the entry point's parent directory as the working directory
-        // for module resolution.
-        let cwd = entry_path.parent().map(|p| p.to_path_buf());
-
         // Get the entry point filename for the bundler input.
-        let input_path = entry_path
+        let file_name = entry_path
             .file_name()
-            .map(|f| format!("./{}", f.to_string_lossy()))
-            .unwrap_or_else(|| entry_path.display().to_string());
+            .ok_or_else(|| ProcessingError::Compilation {
+                message: format!(
+                    "Invalid entry path '{}': must be a file path, not a directory or root",
+                    entry_path.display()
+                ).into(),
+            })?;
+
+        // Use the entry point's parent directory as the working directory
+        // for module resolution. Default to current directory if no parent.
+        let cwd = entry_path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(|p| p.to_path_buf());
+
+        let input_path = format!("./{}", file_name.to_string_lossy());
 
         // Create bundler options.
         let options = BundlerOptions {
