@@ -14,6 +14,7 @@ macros::media_types! {
     (Gif, "image/gif", ["gif"]),
     (Html, "text/html", ["html", "htm", "hxt", "shtml"]),
     (Ico, "image/x-icon", ["ico"]),
+    (JavaScript, "text/javascript", ["js", "mjs"]),
     (Jpeg, "image/jpeg", ["jpeg", "jpg"]),
     (Markdown, "text/markdown", ["md", "markdown"]),
     (Png, "image/png", ["png"]),
