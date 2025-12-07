@@ -7,7 +7,7 @@ use crate::proc::{Asset, MediaCategory, ProcessesAssets, ProcessingError};
 
 mod tokenizer;
 
-use tokenizer::{TemplateFunctionExpression, Token};
+use tokenizer::{TemplateExpression, Token};
 
 /// Processes text assets containing template expressions wrapped in
 /// `~{ }`, drawing values from a context of key-value pairs.
@@ -78,8 +78,9 @@ impl TemplateProcessor {
         while let Some(token) = lexer.next() {
             match token {
                 // Evaluate the expression.
-                Ok(Token::Template(Ok(expression))) => {
-                    match expression.name.as_str() {
+                Ok(Token::Template(Ok(TemplateExpression::Function { name, args, block }))) => {
+                    match name.as_str() {
+                        // Variable reference: ~{ # variable_name }s
                         "#" => {
                             let value = self
                                 .context
@@ -89,27 +90,10 @@ impl TemplateProcessor {
                                 .to_string();
                             output.push_str(&value);
                         }
-                        _ => {
-                            let message = format!("unknown template function: {}", expression.name);
-                            return Err(ProcessingError::Compilation {
-                                message: message.into(),
-                            });
-                        }
-                    }
 
-                    match expression {
-                        TemplateExpression::Identifier { name } => {
-                            let value = self
-                                .context
-                                .get(&name)
-                                .cloned()
-                                .unwrap_or_else(|| format!("~{{ {name} }}~").into())
-                                .to_string();
-                            output.push_str(&value);
-                        }
-
-                        TemplateExpression::Function { name, args, block } if name == "if" => {
-                            let identifier = self.context.get(&args[0]).cloned();
+                        // If statement: ~{ if condition } ... ~{ end }
+                        "if" => {
+                            let identifier = self.context.get(&args[0].try_as_text()?).cloned();
 
                             // A variable reference is "truthy" if it exists and is not "false" or "0".
                             let truthy =
@@ -124,11 +108,13 @@ impl TemplateProcessor {
                             }
                         }
 
-                        TemplateExpression::Function { name, args, block } if name == "for" => {
+                        // For loop: ~{ for item in items } ... ~{ end }
+                        "for" => {
                             todo!()
                         }
 
-                        TemplateExpression::Function { name, args, block } if name == "end" => {
+                        // End block: ~{ end }
+                        "end" => {
                             if lexer.span().start == 0 {
                                 return Err(ProcessingError::Compilation {
                                     message: "unexpected end-of-block".into(),
@@ -138,13 +124,22 @@ impl TemplateProcessor {
                             }
                         }
 
-                        TemplateExpression::Function { name, .. } => {
-                            let message = format!("unknown template function: {name}");
+                        // Unknown template function.s
+                        _ => {
+                            let message = format!("unknown template function: {}", name);
                             return Err(ProcessingError::Compilation {
                                 message: message.into(),
                             });
                         }
-                    };
+                    }
+                }
+
+                // Unexpected template expression error.
+                Ok(Token::Template(Ok(expression))) => {
+                    let message = format!("unexpected template expression: {:?}", expression);
+                    return Err(ProcessingError::Compilation {
+                        message: message.into(),
+                    });
                 }
 
                 // Abort processing if the template contains any errors.

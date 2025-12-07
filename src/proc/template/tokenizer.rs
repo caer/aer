@@ -1,12 +1,14 @@
 use codas::types::Text;
 use logos::{Lexer, Logos};
 
+use crate::proc::ProcessingError;
+
 /// Tokenizer for text assets containing template expressions.
 #[derive(Logos, Debug, PartialEq, Eq, Clone)]
 pub enum Token {
     /// Opening brace of a template expression.
     #[token(r#"~{"#, parse_template_expression)]
-    Template(Result<TemplateFunction, String>),
+    Template(Result<TemplateExpression, String>),
 }
 
 /// Tokenizer for an indiviudal template expression.
@@ -57,8 +59,19 @@ pub enum TemplateExpression {
     End,
 }
 
-/// Parses a series of [TemplateToken]s into a [TemplateFunction].
-fn parse_template_expression(lexer: &mut Lexer<Token>) -> Result<TemplateFunction, String> {
+impl TemplateExpression {
+    pub fn try_as_text(&self) -> Result<Text, ProcessingError> {
+        match self {
+            TemplateExpression::String(value) => Ok(value.clone()),
+            expression => Err(ProcessingError::Compilation {
+                message: format!("expected string expression; got {:?}", expression).into(),
+            }),
+        }
+    }
+}
+
+/// Parses a series of [TemplateToken]s into a [TemplateExpression].
+fn parse_template_expression(lexer: &mut Lexer<Token>) -> Result<TemplateExpression, String> {
     let mut template_lexer = lexer.clone().morph::<TemplateToken>();
 
     // The first token must be a function identifier.
@@ -70,23 +83,18 @@ fn parse_template_expression(lexer: &mut Lexer<Token>) -> Result<TemplateFunctio
         while let Some(Ok(token)) = template_lexer.next() {
             match token {
                 TemplateToken::Identifier => {
-                    args.push(TemplateFunctionExpression::Identifier(
+                    args.push(TemplateExpression::Identifier(
                         template_lexer.slice().into(),
                     ));
                 }
                 TemplateToken::String => {
-                    args.push(TemplateFunctionExpression::String(
-                        template_lexer.slice().into(),
-                    ));
+                    args.push(TemplateExpression::String(template_lexer.slice().into()));
                 }
                 TemplateToken::ExitTemplate => break,
-                _ => {
-                    return Err("unexpected token in function argument list".to_string());
-                }
             }
         }
 
-        Ok(TemplateFunction {
+        Ok(TemplateExpression::Function {
             name: function_identifier.into(),
             args,
             block: function_identifier == "if" || function_identifier == "for",
@@ -141,7 +149,7 @@ mod tests {
         let mut lexer = Token::lexer(r#"~{ super_dup3r_variable }"#);
         assert_eq!(
             lexer.next(),
-            Some(Ok(Token::Template(Ok(TemplateFunction {
+            Some(Ok(Token::Template(Ok(TemplateExpression::Function {
                 name: "super_dup3r_variable".into(),
                 args: vec![],
                 block: false,
@@ -155,12 +163,12 @@ mod tests {
         let mut lexer = Token::lexer(r#"~{ (concat "hello" " " "world") }"#);
         assert_eq!(
             lexer.next(),
-            Some(Ok(Token::Template(Ok(TemplateFunction {
+            Some(Ok(Token::Template(Ok(TemplateExpression::Function {
                 name: "concat".into(),
                 args: vec![
-                    TemplateFunctionExpression::String("hello".into()),
-                    TemplateFunctionExpression::String(" ".into()),
-                    TemplateFunctionExpression::String("world".into()),
+                    TemplateExpression::String("hello".into()),
+                    TemplateExpression::String(" ".into()),
+                    TemplateExpression::String("world".into()),
                 ],
                 block: false,
             }))))
@@ -173,9 +181,9 @@ mod tests {
         let mut lexer = Token::lexer(r#"~{ (if is_empty) }"#);
         assert_eq!(
             lexer.next(),
-            Some(Ok(Token::Template(Ok(TemplateFunction {
+            Some(Ok(Token::Template(Ok(TemplateExpression::Function {
                 name: "if".into(),
-                args: vec![TemplateFunctionExpression::Identifier("is_empty".into())],
+                args: vec![TemplateExpression::Identifier("is_empty".into())],
                 block: true
             }))))
         );
@@ -187,12 +195,12 @@ mod tests {
         let mut lexer = Token::lexer(r#"~{ (for item in items) }"#);
         assert_eq!(
             lexer.next(),
-            Some(Ok(Token::Template(Ok(TemplateFunction {
+            Some(Ok(Token::Template(Ok(TemplateExpression::Function {
                 name: "for".into(),
                 args: vec![
-                    TemplateFunctionExpression::Identifier("item".into()),
-                    TemplateFunctionExpression::Identifier("in".into()),
-                    TemplateFunctionExpression::Identifier("items".into()),
+                    TemplateExpression::Identifier("item".into()),
+                    TemplateExpression::Identifier("in".into()),
+                    TemplateExpression::Identifier("items".into()),
                 ],
                 block: true
             }))))
@@ -205,7 +213,7 @@ mod tests {
         let mut lexer = Token::lexer(r#"~{ (end) }"#);
         assert_eq!(
             lexer.next(),
-            Some(Ok(Token::Template(Ok(TemplateFunction {
+            Some(Ok(Token::Template(Ok(TemplateExpression::Function {
                 name: "end".into(),
                 args: vec![],
                 block: false
