@@ -15,10 +15,10 @@ pub enum Token {
 #[derive(Logos, Debug, PartialEq, Eq, Clone)]
 #[logos(skip r"[ \t\n\f]+")]
 enum TemplateToken {
-    /// An identifier starting with a letter,
+    /// An identifier starting with a letter or hash,
     /// followed by letters, numbers, underscores,
     /// or periods (for dotted identifiers)
-    #[regex(r"[a-zA-Z][a-zA-Z0-9_.]*")]
+    #[regex(r"[a-zA-Z#][a-zA-Z0-9_\.]*")]
     Identifier,
 
     /// A string literal enclosed in double quotes,
@@ -47,8 +47,6 @@ pub enum TemplateExpression {
     Function {
         name: Text,
         args: Vec<TemplateExpression>,
-
-        ///
         block: bool,
     },
 
@@ -60,11 +58,11 @@ pub enum TemplateExpression {
 }
 
 impl TemplateExpression {
-    pub fn try_as_text(&self) -> Result<Text, ProcessingError> {
+    pub fn try_as_identifier(&self) -> Result<Text, ProcessingError> {
         match self {
-            TemplateExpression::String(value) => Ok(value.clone()),
+            TemplateExpression::Identifier(value) => Ok(value.clone()),
             expression => Err(ProcessingError::Compilation {
-                message: format!("expected string expression; got {:?}", expression).into(),
+                message: format!("expected identifier; got {:?}", expression).into(),
             }),
         }
     }
@@ -75,7 +73,8 @@ fn parse_template_expression(lexer: &mut Lexer<Token>) -> Result<TemplateExpress
     let mut template_lexer = lexer.clone().morph::<TemplateToken>();
 
     // The first token must be a function identifier.
-    if let Some(Ok(TemplateToken::Identifier)) = template_lexer.next() {
+    let next = template_lexer.next();
+    if let Some(Ok(TemplateToken::Identifier)) = next {
         let function_identifier = template_lexer.slice();
 
         // The following tokens up to the end of the template must be arguments.
@@ -88,9 +87,19 @@ fn parse_template_expression(lexer: &mut Lexer<Token>) -> Result<TemplateExpress
                     ));
                 }
                 TemplateToken::String => {
-                    args.push(TemplateExpression::String(template_lexer.slice().into()));
+                    let slice = template_lexer.slice();
+                    // Remove the surrounding quotes and unescape.
+                    let unescaped = slice[1..slice.len() - 1]
+                        .replace(r#"\""#, r#"""#)
+                        .replace(r#"\n"#, "\n")
+                        .replace(r#"\t"#, "\t")
+                        .replace(r#"\\"#, r#"\"#);
+                    args.push(TemplateExpression::String(unescaped.into()));
                 }
-                TemplateToken::ExitTemplate => break,
+                TemplateToken::ExitTemplate => {
+                    *lexer = template_lexer.morph();
+                    break;
+                }
             }
         }
 
@@ -100,43 +109,10 @@ fn parse_template_expression(lexer: &mut Lexer<Token>) -> Result<TemplateExpress
             block: function_identifier == "if" || function_identifier == "for",
         })
     } else {
-        Err("template expression must start with an function identifier".to_string())
-    }
-}
-
-/// Takes the next token off of `template_lexer` and
-/// returns `Ok` iff it is a [TemplateToken::Identifier].
-fn take_next_identifier<'a>(
-    template_lexer: &mut Lexer<'a, TemplateToken>,
-    after_token: &str,
-) -> Result<&'a str, String> {
-    match template_lexer.next() {
-        Some(Ok(TemplateToken::Identifier)) => Ok(template_lexer.slice()),
-        _ => Err(format!(
-            "expected identifier after `{after_token}`; got {}",
-            template_lexer.slice()
-        )),
-    }
-}
-
-/// Takes the next token off of `template_lexer` and returns `Ok` iff it is
-/// a [TemplateToken::ExitTemplate], re-assigning `template_lexer` back to `lexer`.
-fn check_exit_token<'a>(
-    lexer: &mut Lexer<'a, Token>,
-    mut template_lexer: Lexer<'a, TemplateToken>,
-) -> Result<(), String> {
-    match template_lexer.next() {
-        Some(Ok(TemplateToken::ExitTemplate)) => {
-            *lexer = template_lexer.morph();
-            Ok(())
-        }
-        _ => {
-            let message = format!(
-                "expected closing brace `}}`; got {}",
-                template_lexer.slice()
-            );
-            Err(message)
-        }
+        Err(format!(
+            "expected function identifier at start of template expression, got: {:?}",
+            next
+        ))
     }
 }
 
@@ -146,12 +122,14 @@ mod tests {
 
     #[test]
     fn lexes_variables() {
-        let mut lexer = Token::lexer(r#"~{ super_dup3r_variable }"#);
+        let mut lexer = Token::lexer(r#"~{ # super_dup3r_variable }"#);
         assert_eq!(
             lexer.next(),
             Some(Ok(Token::Template(Ok(TemplateExpression::Function {
-                name: "super_dup3r_variable".into(),
-                args: vec![],
+                name: "#".into(),
+                args: vec![TemplateExpression::Identifier(
+                    "super_dup3r_variable".into()
+                )],
                 block: false,
             }))))
         );
@@ -160,7 +138,7 @@ mod tests {
 
     #[test]
     fn lexes_function_calls() {
-        let mut lexer = Token::lexer(r#"~{ (concat "hello" " " "world") }"#);
+        let mut lexer = Token::lexer(r#"~{ concat "hello" " " "world" }"#);
         assert_eq!(
             lexer.next(),
             Some(Ok(Token::Template(Ok(TemplateExpression::Function {
@@ -178,7 +156,7 @@ mod tests {
 
     #[test]
     fn lexes_if_blocks() {
-        let mut lexer = Token::lexer(r#"~{ (if is_empty) }"#);
+        let mut lexer = Token::lexer(r#"~{ if is_empty }"#);
         assert_eq!(
             lexer.next(),
             Some(Ok(Token::Template(Ok(TemplateExpression::Function {
@@ -192,7 +170,7 @@ mod tests {
 
     #[test]
     fn lexes_for_blocks() {
-        let mut lexer = Token::lexer(r#"~{ (for item in items) }"#);
+        let mut lexer = Token::lexer(r#"~{ for item in items }"#);
         assert_eq!(
             lexer.next(),
             Some(Ok(Token::Template(Ok(TemplateExpression::Function {
@@ -210,7 +188,7 @@ mod tests {
 
     #[test]
     fn lexes_end_blocks() {
-        let mut lexer = Token::lexer(r#"~{ (end) }"#);
+        let mut lexer = Token::lexer(r#"~{ end }"#);
         assert_eq!(
             lexer.next(),
             Some(Ok(Token::Template(Ok(TemplateExpression::Function {

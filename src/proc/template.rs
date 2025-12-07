@@ -93,7 +93,8 @@ impl TemplateProcessor {
 
                         // If statement: ~{ if condition } ... ~{ end }
                         "if" => {
-                            let identifier = self.context.get(&args[0].try_as_text()?).cloned();
+                            let identifier =
+                                self.context.get(&args[0].try_as_identifier()?).cloned();
 
                             // A variable reference is "truthy" if it exists and is not "false" or "0".
                             let truthy =
@@ -215,7 +216,7 @@ mod tests {
     fn processes_if_template() {
         let mut asset = Asset::new(
             "test.html".into(),
-            r#"~{ (if is_empty) }This is empty!~{ (end) }"#.trim().as_bytes().to_vec(),
+            r#"~{ if is_empty }This is empty!~{ end }"#.trim().as_bytes().to_vec(),
         );
         asset.set_media_type(MediaType::Html);
 
