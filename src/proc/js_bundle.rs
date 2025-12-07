@@ -5,8 +5,7 @@ use brk_rolldown_common::Output;
 
 use super::{Asset, MediaType, ProcessesAssets, ProcessingError};
 
-/// A processor that bundles JavaScript entry points
-/// and their dependencies into a single file.
+/// Bundles JavaScript entry points and their dependencies into a single file.
 ///
 /// This processor uses [rolldown](https://rolldown.rs) via
 /// [brk_rolldown](https://crates.io/crates/brk_rolldown) to bundle
@@ -30,24 +29,7 @@ pub struct JsBundleProcessor {
     minify: bool,
 }
 
-impl Default for JsBundleProcessor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl JsBundleProcessor {
-    /// Creates a new JS bundle processor with default settings.
-    pub fn new() -> Self {
-        Self { minify: false }
-    }
-
-    /// Enables minification of the bundled output.
-    pub fn with_minify(mut self, minify: bool) -> Self {
-        self.minify = minify;
-        self
-    }
-
     /// Bundles the JavaScript file at `entry_path` and returns the bundled code.
     ///
     /// Modules are resolved relative to the entry point's parent directory.
@@ -151,22 +133,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn creates_processor_with_minify() {
-        let processor = JsBundleProcessor::new().with_minify(true);
-
-        assert!(processor.minify);
-    }
-
-    #[test]
-    fn creates_default_processor() {
-        let processor = JsBundleProcessor::default();
-
-        assert!(!processor.minify);
-    }
-
-    #[test]
     fn skips_non_javascript_assets() {
-        let processor = JsBundleProcessor::new();
+        let processor = JsBundleProcessor { minify: false };
 
         // Create a non-JavaScript asset.
         let mut css_asset = Asset::new("style.css".into(), "body {}".as_bytes().to_vec());
@@ -178,7 +146,7 @@ mod tests {
 
     #[test]
     fn bundles_javascript() {
-        let processor = JsBundleProcessor::new();
+        let processor = JsBundleProcessor { minify: false };
 
         // Create a JavaScript asset pointing to our test file.
         let mut js_asset = Asset::new("test/js_bundle/entry.js".into(), "".as_bytes().to_vec());
