@@ -17,17 +17,17 @@ use tokenizer::{TemplateExpression, Token};
 /// Given a context containing `name = 'Aer', admin = 'true', users = []`, this template:
 ///
 /// ```html
-/// <div> Hi ~{# name}! It's ~{date}.</div>
-/// ~{if admin}:
+/// <div> Hi ~{# name}! It's ~{# date}.</div>
+/// ~{if admin}
 ///     <p> You're an administrator, btw.</p>
 ///     <ul>
-///     ~{for user in users}:
-///         <li> ~{user} </li>
-///     ~{endfor}
+///     ~{for user in users}
+///         <li> ~{# user} </li>
+///     ~{end}
 ///     </ul>
-/// ~{else}:
-///     <p> You're not an administrator.</p>
-/// ~{endif}
+/// ~{else}
+///     <p> You're not an administrator, btw.</p>
+/// ~{end}
 /// ```
 ///
 /// would compile to:
@@ -78,7 +78,7 @@ impl TemplateProcessor {
         while let Some(token) = lexer.next() {
             match token {
                 // Evaluate the expression.
-                Ok(Token::Template(Ok(TemplateExpression::Function { name, args, block }))) => {
+                Ok(Token::OpenTemplate(Ok(TemplateExpression::Function { name, args, .. }))) => {
                     match name.as_str() {
                         // Variable reference: ~{ # variable_name }s
                         "#" => {
@@ -114,18 +114,15 @@ impl TemplateProcessor {
                             todo!()
                         }
 
-                        // End block: ~{ end }
+                        // Valid end-of-block statements should be handled by
+                        // the block traversal logic above.
                         "end" => {
-                            if lexer.span().start == 0 {
-                                return Err(ProcessingError::Compilation {
-                                    message: "unexpected end-of-block".into(),
-                                });
-                            } else {
-                                break;
-                            }
+                            return Err(ProcessingError::Compilation {
+                                message: "unexpected end-of-block".into(),
+                            });
                         }
 
-                        // Unknown template function.s
+                        // Unknown template function.
                         _ => {
                             let message = format!("unknown template function: {}", name);
                             return Err(ProcessingError::Compilation {
@@ -136,7 +133,7 @@ impl TemplateProcessor {
                 }
 
                 // Unexpected template expression error.
-                Ok(Token::Template(Ok(expression))) => {
+                Ok(Token::OpenTemplate(Ok(expression))) => {
                     let message = format!("unexpected template expression: {:?}", expression);
                     return Err(ProcessingError::Compilation {
                         message: message.into(),
@@ -144,7 +141,7 @@ impl TemplateProcessor {
                 }
 
                 // Abort processing if the template contains any errors.
-                Ok(Token::Template(Err(err))) => {
+                Ok(Token::OpenTemplate(Err(err))) => {
                     return Err(ProcessingError::Compilation {
                         message: format!("template parse error: {}", err).into(),
                     });
@@ -180,19 +177,28 @@ impl TemplateProcessor {
         // span, since the immediate next token marks the beginning
         // of the traversed block.
         let start = lexer.span().end;
+        let mut end = lexer.span().end;
 
         while let Some(token) = lexer.next() {
             match token {
-                Ok(Token::Template(Ok(TemplateExpression::Function { block, .. }))) if block => {
-                    let _ = Self::traverse_template_block(lexer)?;
-                }
-                Ok(Token::Template(Ok(TemplateExpression::Function { name, .. })))
-                    if name == "end" =>
-                {
-                    return Ok(start..lexer.span().end);
+                Ok(Token::OpenTemplate(Ok(TemplateExpression::Function { name, .. }))) => {
+                    match name.as_str() {
+                        // Nested block: traverse it fully.
+                        "if" | "for" => {
+                            let _ = Self::traverse_template_block(lexer)?;
+                        }
+
+                        // End of the current block.
+                        "end" => {
+                            return Ok(start..end);
+                        }
+                        _ => {}
+                    }
                 }
                 _ => {}
             }
+
+            end = lexer.span().end;
         }
 
         Err(ProcessingError::Compilation {
