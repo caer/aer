@@ -11,9 +11,36 @@ use tokenizer::{TemplateExpression, Token};
 
 /// Processes text assets containing template expressions wrapped in
 /// `~{ }`, drawing values from a context of key-value pairs.
+///
+/// # Example
+///
+/// Given a context containing `name = 'Aer', admin = 'true', users = ['Ray', 'Roy']`, this template:
+///
+/// ```html
+/// <div> Hi ~{# name}! It's ~{date "yyyy-mm-dd"}.</div>
+/// ~{if admin}
+///     <p> You're an administrator, btw.</p>
+///     <ul>
+///     ~{for user in users}
+///         <li>~{# user}</li>
+///     ~{end}
+///     </ul>
+/// ~{end}
+/// ```
+///
+/// would compile to:
+///
+/// ```html
+/// <div> Hi Aer! It's [YYYY-MM-DD].</div>
+/// <p> You're an administrator, btw.</p>
+/// <ul>
+///    <li>Ray</li>
+///    <li>Roy</li>
+/// </ul>
+/// ```
 pub struct TemplateProcessor {
     /// Context containing variables that can be used by templates.
-    context: BTreeMap<Text, Text>,
+    context: BTreeMap<Text, TemplateValue>,
 }
 
 impl ProcessesAssets for TemplateProcessor {
@@ -48,68 +75,133 @@ impl TemplateProcessor {
         while let Some(token) = lexer.next() {
             match token {
                 // Evaluate the expression.
-                Ok(Token::Template(Ok(expression))) => {
-                    match expression {
-                        TemplateExpression::Identifier { name } => {
-                            let value = self
-                                .context
-                                .get(&name)
-                                .cloned()
-                                .unwrap_or_else(|| format!("~{{ {name} }}~").into())
-                                .to_string();
+                Ok(Token::OpenTemplate(Ok(TemplateExpression::Function {
+                    name, args, ..
+                }))) => {
+                    match name.as_str() {
+                        // Variable reference: ~{ # variable_name }
+                        "#" => {
+                            let identifier = args
+                                .first()
+                                .ok_or(ProcessingError::Compilation {
+                                    message: "missing variable identifier in variable reference"
+                                        .into(),
+                                })?
+                                .try_as_identifier()?;
+
+                            let value = match self.context.get(&identifier) {
+                                Some(TemplateValue::Text(text)) => text.clone(),
+                                Some(TemplateValue::List(items)) => {
+                                    let mut items_string = String::from("[");
+                                    for item in items {
+                                        items_string.push_str(item.as_str());
+                                        items_string.push_str(", ");
+                                    }
+                                    if !items.is_empty() {
+                                        items_string.truncate(items_string.len() - 2);
+                                    }
+                                    items_string.push(']');
+                                    items_string.into()
+                                }
+                                None => format!("~{{# {} }}~", identifier).into(),
+                            };
+
                             output.push_str(&value);
                         }
 
-                        TemplateExpression::FunctionCall { .. } => todo!(),
-
-                        TemplateExpression::IfBlock {
-                            expression,
-                            negated,
-                        } => {
-                            // @caer: todo: We assume if blocks can only contain identifier references. Is that a valid assumption?
-                            let identifier = match *expression {
-                                TemplateExpression::Identifier { name } => {
-                                    self.context.get(&name).cloned()
-                                }
-                                _ => None,
-                            };
+                        // If statement: ~{ if condition } ... ~{ end }
+                        "if" => {
+                            let identifier = args
+                                .first()
+                                .ok_or(ProcessingError::Compilation {
+                                    message: "missing variable identifier in if expression".into(),
+                                })?
+                                .try_as_identifier()?;
 
                             // A variable reference is "truthy" if it exists and is not "false" or "0".
-                            let mut truthy =
-                                !matches!(identifier.as_deref(), Some("false") | Some("0") | None);
-
-                            // Invert the truthiness if the condition is negated.
-                            if negated {
-                                truthy = !truthy;
-                            }
+                            let truthy = match self.context.get(&identifier) {
+                                Some(TemplateValue::Text(text)) => {
+                                    text != "false" && text != "0" && !text.is_empty()
+                                }
+                                Some(TemplateValue::List(list)) => !list.is_empty(),
+                                None => false,
+                            };
 
                             // If the condition is truthy, compile the contents of the block.
+                            let block_span = Self::traverse_template_block(lexer)?;
                             if truthy {
-                                let block_span = Self::traverse_template_block(lexer)?;
                                 let block_text = &lexer.source()[block_span];
                                 let mut block_lexer = Token::lexer(block_text);
                                 self.compile_template(&mut block_lexer, output)?;
                             }
                         }
 
-                        TemplateExpression::ForBlock { .. } => todo!(),
+                        // For loop: ~{ for item in items } ... ~{ end }
+                        "for" => {
+                            let item_identifier = args
+                                .first()
+                                .ok_or(ProcessingError::Compilation {
+                                    message: "missing item identifier in for loop".into(),
+                                })?
+                                .try_as_identifier()?;
+                            let collection_identifier = args
+                                .get(2)
+                                .ok_or(ProcessingError::Compilation {
+                                    message: "missing collection identifier in for loop".into(),
+                                })?
+                                .try_as_identifier()?;
+                            let collection = self.context.get(&collection_identifier);
 
-                        // An end block terminates compilation, but only
-                        // if we're inside of a block.
-                        TemplateExpression::EndBlock => {
-                            if lexer.span().start == 0 {
-                                return Err(ProcessingError::Compilation {
-                                    message: "unexpected end-of-block".into(),
-                                });
-                            } else {
-                                break;
+                            let block_span = Self::traverse_template_block(lexer)?;
+                            if let Some(TemplateValue::List(items)) = collection
+                                && !items.is_empty()
+                            {
+                                let block_text = &lexer.source()[block_span];
+
+                                for item in items {
+                                    let mut loop_context = self.context.clone();
+                                    loop_context.insert(
+                                        item_identifier.clone(),
+                                        TemplateValue::Text(item.clone()),
+                                    );
+
+                                    let loop_processor = TemplateProcessor {
+                                        context: loop_context,
+                                    };
+                                    let mut block_lexer = Token::lexer(block_text);
+                                    loop_processor.compile_template(&mut block_lexer, output)?;
+                                }
                             }
                         }
-                    };
+
+                        // Valid end-of-block statements should be handled by
+                        // the block traversal logic above.
+                        "end" => {
+                            return Err(ProcessingError::Compilation {
+                                message: "unexpected end-of-block".into(),
+                            });
+                        }
+
+                        // Unknown template function.
+                        _ => {
+                            let message = format!("unknown template function: {}", name);
+                            return Err(ProcessingError::Compilation {
+                                message: message.into(),
+                            });
+                        }
+                    }
+                }
+
+                // Unexpected template expression error.
+                Ok(Token::OpenTemplate(Ok(expression))) => {
+                    let message = format!("unexpected template expression: {:?}", expression);
+                    return Err(ProcessingError::Compilation {
+                        message: message.into(),
+                    });
                 }
 
                 // Abort processing if the template contains any errors.
-                Ok(Token::Template(Err(err))) => {
+                Ok(Token::OpenTemplate(Err(err))) => {
                     return Err(ProcessingError::Compilation {
                         message: format!("template parse error: {}", err).into(),
                     });
@@ -145,18 +237,25 @@ impl TemplateProcessor {
         // span, since the immediate next token marks the beginning
         // of the traversed block.
         let start = lexer.span().end;
+        let mut end = lexer.span().end;
 
         while let Some(token) = lexer.next() {
-            match token {
-                Ok(Token::Template(Ok(TemplateExpression::IfBlock { .. })))
-                | Ok(Token::Template(Ok(TemplateExpression::ForBlock { .. }))) => {
-                    let _ = Self::traverse_template_block(lexer)?;
+            if let Ok(Token::OpenTemplate(Ok(TemplateExpression::Function { name, .. }))) = token {
+                match name.as_str() {
+                    // Nested block: traverse it fully.
+                    "if" | "for" => {
+                        let _ = Self::traverse_template_block(lexer)?;
+                    }
+
+                    // End of the current block.
+                    "end" => {
+                        return Ok(start..end);
+                    }
+                    _ => {}
                 }
-                Ok(Token::Template(Ok(TemplateExpression::EndBlock))) => {
-                    return Ok(start..lexer.span().end);
-                }
-                _ => {}
             }
+
+            end = lexer.span().end;
         }
 
         Err(ProcessingError::Compilation {
@@ -167,6 +266,13 @@ impl TemplateProcessor {
             .into(),
         })
     }
+}
+
+/// Value types used in [TemplateProcessor] contexts.
+#[derive(Debug, Clone)]
+pub enum TemplateValue {
+    Text(Text),
+    List(Vec<Text>),
 }
 
 #[cfg(test)]
@@ -180,16 +286,40 @@ mod tests {
     fn processes_if_template() {
         let mut asset = Asset::new(
             "test.html".into(),
-            r#"~{ if is_empty }This is empty!~{ end }"#.trim().as_bytes().to_vec(),
+            r#"~{if is_empty}This is empty!~{end}"#.trim().as_bytes().to_vec(),
         );
         asset.set_media_type(MediaType::Html);
 
         TemplateProcessor {
-            context: [("is_empty".into(), "true".into())].into(),
+            context: [("is_empty".into(), TemplateValue::Text("true".into()))].into(),
         }
         .process(&mut asset)
         .unwrap();
 
         assert_eq!(r#"This is empty!"#, asset.as_text().unwrap());
+    }
+
+    #[test]
+    fn processes_for_template() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"Items: [~{for item in items}~{# item}, ~{end}]"#.trim().as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        TemplateProcessor {
+            context: [(
+                "items".into(),
+                TemplateValue::List(vec!["apple".into(), "banana".into(), "cherry".into()]),
+            )]
+            .into(),
+        }
+        .process(&mut asset)
+        .unwrap();
+
+        assert_eq!(
+            r#"Items: [apple, banana, cherry, ]"#,
+            asset.as_text().unwrap()
+        );
     }
 }
