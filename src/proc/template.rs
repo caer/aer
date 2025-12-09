@@ -14,19 +14,17 @@ use tokenizer::{TemplateExpression, Token};
 ///
 /// # Example
 ///
-/// Given a context containing `name = 'Aer', admin = 'true', users = []`, this template:
+/// Given a context containing `name = 'Aer', admin = 'true', users = ['Ray', 'Roy']`, this template:
 ///
 /// ```html
-/// <div> Hi ~{# name}! It's ~{# date}.</div>
+/// <div> Hi ~{# name}! It's ~{date "yyyy-mm-dd"}.</div>
 /// ~{if admin}
 ///     <p> You're an administrator, btw.</p>
 ///     <ul>
 ///     ~{for user in users}
-///         <li> ~{# user} </li>
+///         <li>~{# user}</li>
 ///     ~{end}
 ///     </ul>
-/// ~{else}
-///     <p> You're not an administrator, btw.</p>
 /// ~{end}
 /// ```
 ///
@@ -35,11 +33,14 @@ use tokenizer::{TemplateExpression, Token};
 /// ```html
 /// <div> Hi Aer! It's [YYYY-MM-DD].</div>
 /// <p> You're an administrator, btw.</p>
-/// <ul></ul>
+/// <ul>
+///    <li>Ray</li>
+///    <li>Roy</li>
+/// </ul>
 /// ```
 pub struct TemplateProcessor {
     /// Context containing variables that can be used by templates.
-    context: BTreeMap<Text, Text>,
+    context: BTreeMap<Text, TemplateValue>,
 }
 
 impl ProcessesAssets for TemplateProcessor {
@@ -64,10 +65,6 @@ impl ProcessesAssets for TemplateProcessor {
 }
 
 impl TemplateProcessor {
-    pub fn new(context: BTreeMap<Text, Text>) -> Self {
-        Self { context }
-    }
-
     /// Compiles a text template containing zero or more [TemplateExpression]s,
     /// appending the compiled results to `output`.
     fn compile_template(
@@ -78,27 +75,46 @@ impl TemplateProcessor {
         while let Some(token) = lexer.next() {
             match token {
                 // Evaluate the expression.
-                Ok(Token::OpenTemplate(Ok(TemplateExpression::Function { name, args, .. }))) => {
+                Ok(Token::OpenTemplate(Ok(TemplateExpression::Function {
+                    name, args, ..
+                }))) => {
                     match name.as_str() {
                         // Variable reference: ~{ # variable_name }s
                         "#" => {
-                            let value = self
-                                .context
-                                .get(&name)
-                                .cloned()
-                                .unwrap_or_else(|| format!("~{{ {name} }}~").into())
-                                .to_string();
+                            let identifier = args[0].try_as_identifier()?;
+
+                            let value = match self.context.get(&identifier) {
+                                Some(TemplateValue::Text(text)) => text.clone(),
+                                Some(TemplateValue::List(items)) => {
+                                    let mut items_string = String::from("[");
+                                    for item in items {
+                                        items_string.push_str(item.as_str());
+                                        items_string.push_str(", ");
+                                    }
+                                    if !items.is_empty() {
+                                        items_string.truncate(items_string.len() - 2);
+                                    }
+                                    items_string.push(']');
+                                    items_string.into()
+                                }
+                                None => format!("~{{# {} }}~", identifier).into(),
+                            };
+
                             output.push_str(&value);
                         }
 
                         // If statement: ~{ if condition } ... ~{ end }
                         "if" => {
-                            let identifier =
-                                self.context.get(&args[0].try_as_identifier()?).cloned();
+                            let identifier = args[0].try_as_identifier()?;
 
                             // A variable reference is "truthy" if it exists and is not "false" or "0".
-                            let truthy =
-                                !matches!(identifier.as_deref(), Some("false") | Some("0") | None);
+                            let truthy = match self.context.get(&identifier) {
+                                Some(TemplateValue::Text(text)) => {
+                                    text != "false" && text != "0" && !text.is_empty()
+                                }
+                                Some(TemplateValue::List(list)) => !list.is_empty(),
+                                None => false,
+                            };
 
                             // If the condition is truthy, compile the contents of the block.
                             let block_span = Self::traverse_template_block(lexer)?;
@@ -111,7 +127,30 @@ impl TemplateProcessor {
 
                         // For loop: ~{ for item in items } ... ~{ end }
                         "for" => {
-                            todo!()
+                            let item_identifier = args[0].try_as_identifier()?;
+                            let collection_identifier = args[2].try_as_identifier()?;
+                            let collection = self.context.get(&collection_identifier);
+
+                            let block_span = Self::traverse_template_block(lexer)?;
+                            if let Some(TemplateValue::List(items)) = collection
+                                && !items.is_empty()
+                            {
+                                let block_text = &lexer.source()[block_span];
+
+                                for item in items {
+                                    let mut loop_context = self.context.clone();
+                                    loop_context.insert(
+                                        item_identifier.clone(),
+                                        TemplateValue::Text(item.clone()),
+                                    );
+
+                                    let loop_processor = TemplateProcessor {
+                                        context: loop_context,
+                                    };
+                                    let mut block_lexer = Token::lexer(block_text);
+                                    loop_processor.compile_template(&mut block_lexer, output)?;
+                                }
+                            }
                         }
 
                         // Valid end-of-block statements should be handled by
@@ -180,22 +219,19 @@ impl TemplateProcessor {
         let mut end = lexer.span().end;
 
         while let Some(token) = lexer.next() {
-            match token {
-                Ok(Token::OpenTemplate(Ok(TemplateExpression::Function { name, .. }))) => {
-                    match name.as_str() {
-                        // Nested block: traverse it fully.
-                        "if" | "for" => {
-                            let _ = Self::traverse_template_block(lexer)?;
-                        }
-
-                        // End of the current block.
-                        "end" => {
-                            return Ok(start..end);
-                        }
-                        _ => {}
+            if let Ok(Token::OpenTemplate(Ok(TemplateExpression::Function { name, .. }))) = token {
+                match name.as_str() {
+                    // Nested block: traverse it fully.
+                    "if" | "for" => {
+                        let _ = Self::traverse_template_block(lexer)?;
                     }
+
+                    // End of the current block.
+                    "end" => {
+                        return Ok(start..end);
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
 
             end = lexer.span().end;
@@ -211,6 +247,13 @@ impl TemplateProcessor {
     }
 }
 
+/// Value types used in [TemplateProcessor] contexts.
+#[derive(Debug, Clone)]
+pub enum TemplateValue {
+    Text(Text),
+    List(Vec<Text>),
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -222,14 +265,40 @@ mod tests {
     fn processes_if_template() {
         let mut asset = Asset::new(
             "test.html".into(),
-            r#"~{ if is_empty }This is empty!~{ end }"#.trim().as_bytes().to_vec(),
+            r#"~{if is_empty}This is empty!~{end}"#.trim().as_bytes().to_vec(),
         );
         asset.set_media_type(MediaType::Html);
 
-        TemplateProcessor::new([("is_empty".into(), "true".into())].into())
-            .process(&mut asset)
-            .unwrap();
+        TemplateProcessor {
+            context: [("is_empty".into(), TemplateValue::Text("true".into()))].into(),
+        }
+        .process(&mut asset)
+        .unwrap();
 
         assert_eq!(r#"This is empty!"#, asset.as_text().unwrap());
+    }
+
+    #[test]
+    fn processes_for_template() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"Items: [~{for item in items}~{# item}, ~{end}]"#.trim().as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        TemplateProcessor {
+            context: [(
+                "items".into(),
+                TemplateValue::List(vec!["apple".into(), "banana".into(), "cherry".into()]),
+            )]
+            .into(),
+        }
+        .process(&mut asset)
+        .unwrap();
+
+        assert_eq!(
+            r#"Items: [apple, banana, cherry, ]"#,
+            asset.as_text().unwrap()
+        );
     }
 }
