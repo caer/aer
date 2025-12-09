@@ -11,7 +11,7 @@ pub enum Token {
     OpenTemplate(Result<TemplateExpression, String>),
 }
 
-/// Tokenizer for an indiviudal template expression.
+/// Tokenizer for an individual template expression.
 #[derive(Logos, Debug, PartialEq, Eq, Clone)]
 #[logos(skip r"[ \t\n\f]+")]
 enum TemplateToken {
@@ -80,10 +80,12 @@ fn parse_template_expression(lexer: &mut Lexer<Token>) -> Result<TemplateExpress
                     let slice = template_lexer.slice();
                     // Remove the surrounding quotes and unescape.
                     let unescaped = slice[1..slice.len() - 1]
+                        .replace(r#"\\\\"#, r#"\\"#) // handle escaped backslash first (for double escaping)
+                        .replace(r#"\\"#, r#"\ "#) // handle single escaped backslash
                         .replace(r#"\""#, r#"""#)
                         .replace(r#"\n"#, "\n")
                         .replace(r#"\t"#, "\t")
-                        .replace(r#"\\"#, r#"\"#);
+                        .replace(r#"\ "#, r#"\\"#); // restore single backslash
                     args.push(TemplateExpression::String(unescaped.into()));
                 }
                 TemplateToken::CloseTemplate => {

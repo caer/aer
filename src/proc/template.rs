@@ -79,9 +79,15 @@ impl TemplateProcessor {
                     name, args, ..
                 }))) => {
                     match name.as_str() {
-                        // Variable reference: ~{ # variable_name }s
+                        // Variable reference: ~{ # variable_name }
                         "#" => {
-                            let identifier = args[0].try_as_identifier()?;
+                            let identifier = args
+                                .first()
+                                .ok_or(ProcessingError::Compilation {
+                                    message: "missing variable identifier in variable reference"
+                                        .into(),
+                                })?
+                                .try_as_identifier()?;
 
                             let value = match self.context.get(&identifier) {
                                 Some(TemplateValue::Text(text)) => text.clone(),
@@ -105,7 +111,12 @@ impl TemplateProcessor {
 
                         // If statement: ~{ if condition } ... ~{ end }
                         "if" => {
-                            let identifier = args[0].try_as_identifier()?;
+                            let identifier = args
+                                .first()
+                                .ok_or(ProcessingError::Compilation {
+                                    message: "missing variable identifier in if expression".into(),
+                                })?
+                                .try_as_identifier()?;
 
                             // A variable reference is "truthy" if it exists and is not "false" or "0".
                             let truthy = match self.context.get(&identifier) {
@@ -127,8 +138,18 @@ impl TemplateProcessor {
 
                         // For loop: ~{ for item in items } ... ~{ end }
                         "for" => {
-                            let item_identifier = args[0].try_as_identifier()?;
-                            let collection_identifier = args[2].try_as_identifier()?;
+                            let item_identifier = args
+                                .first()
+                                .ok_or(ProcessingError::Compilation {
+                                    message: "missing item identifier in for loop".into(),
+                                })?
+                                .try_as_identifier()?;
+                            let collection_identifier = args
+                                .get(2)
+                                .ok_or(ProcessingError::Compilation {
+                                    message: "missing collection identifier in for loop".into(),
+                                })?
+                                .try_as_identifier()?;
                             let collection = self.context.get(&collection_identifier);
 
                             let block_span = Self::traverse_template_block(lexer)?;
