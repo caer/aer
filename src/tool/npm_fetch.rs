@@ -119,18 +119,18 @@ impl NpmFetcher {
     }
 
     fn fetch_recursive(&mut self, package_name: &str, version_spec: &str) -> Result<(), NpmFetchError> {
-        // Check if we've already fetched this package
-        let package_key = format!("{}@{}", package_name, version_spec);
-        if self.fetched.contains(&package_key) {
-            tracing::debug!("Package already fetched: {}", package_key);
-            return Ok(());
-        }
-
         // Fetch package metadata from registry
         let metadata = self.fetch_package_metadata(package_name)?;
         
         // Resolve version
         let version = self.resolve_version(&metadata, version_spec)?;
+        
+        // Check if we've already fetched this package at this exact version
+        let package_key = format!("{}@{}", package_name, version);
+        if self.fetched.contains(&package_key) {
+            tracing::debug!("Package already fetched: {}", package_key);
+            return Ok(());
+        }
         
         // Get version metadata
         let version_metadata = metadata.versions.get(&version)
