@@ -364,7 +364,9 @@ impl NpmFetcher {
         }
 
         // Clean up temp directory
-        let _ = fs::remove_dir_all(&temp_extract);
+        if let Err(e) = fs::remove_dir_all(&temp_extract) {
+            tracing::warn!("Failed to clean up temporary extraction directory: {}", e);
+        }
 
         Ok(())
     }
@@ -407,6 +409,8 @@ impl NpmFetcher {
         self.extract_packages(output_dir)?;
 
         // Copy the entry script to the output directory so node_modules can be resolved
+        // This is necessary because the JS bundler uses the entry script's parent directory
+        // as the working directory for module resolution
         let entry_filename = entry_script.file_name()
             .ok_or_else(|| NpmFetchError::InvalidPackage("Entry script must be a file".to_string()))?;
         let temp_entry = output_dir.join(entry_filename);
@@ -429,7 +433,9 @@ impl NpmFetcher {
             .map_err(|e| NpmFetchError::InvalidPackage(format!("Bundling failed: {:?}", e)));
 
         // Clean up the temporary entry script
-        let _ = fs::remove_file(&temp_entry);
+        if let Err(e) = fs::remove_file(&temp_entry) {
+            tracing::warn!("Failed to clean up temporary entry script: {}", e);
+        }
 
         result?;
 
