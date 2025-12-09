@@ -2,7 +2,7 @@
 
 ## Basic Usage
 
-The `npm_fetch` tool allows you to download NPM packages and their dependencies.
+The `npm_fetch` tool allows you to download NPM packages and their dependencies, extract them into a node_modules structure, and bundle JavaScript applications.
 
 ### Fetch a package with latest version
 
@@ -31,9 +31,60 @@ let mut fetcher = NpmFetcher::new("./packages");
 fetcher.fetch("react", Some("18.2.0")).unwrap();
 ```
 
+## Bundle with Packages
+
+After downloading packages, you can bundle a JavaScript application that uses them:
+
+```rust
+use aer::tool::npm_fetch::NpmFetcher;
+
+// Download packages
+let mut fetcher = NpmFetcher::new("./npm_cache");
+fetcher.fetch("lodash", Some("latest")).unwrap();
+fetcher.fetch("react", Some("latest")).unwrap();
+
+// Bundle your application
+let bundled_code = fetcher.bundle_with_packages(
+    "./src/app.js",  // Your entry point
+    "./output"       // Where node_modules will be created
+).unwrap();
+
+// Save the bundled output
+std::fs::write("./output/bundle.js", bundled_code).unwrap();
+```
+
+### Your Entry Point Example
+
+Your `app.js` can import packages normally:
+
+```javascript
+import _ from 'lodash';
+import React from 'react';
+
+export function myApp() {
+    const data = _.chunk(['a', 'b', 'c', 'd'], 2);
+    return React.createElement('div', null, 'Hello!');
+}
+```
+
+## Extract Packages Only
+
+If you just want to extract packages without bundling:
+
+```rust
+use aer::tool::npm_fetch::NpmFetcher;
+
+let fetcher = NpmFetcher::new("./packages");
+fetcher.extract_packages("./output").unwrap();
+```
+
+This creates a `./output/node_modules/` directory with all downloaded packages.
+
 ## Output Structure
 
-Each package is saved as a tarball in a subdirectory:
+### Downloaded Tarballs
+
+Each package is initially saved as a tarball:
 
 ```
 ./packages/
@@ -45,7 +96,26 @@ Each package is saved as a tarball in a subdirectory:
       └── package.tgz
 ```
 
-Note: Scoped packages (with `@`) are prefixed with `at_` in the directory name.
+### Extracted node_modules
+
+After extraction, packages are organized in a node_modules structure:
+
+```
+./output/
+  └── node_modules/
+      ├── lodash/
+      │   ├── package.json
+      │   └── ...
+      ├── @lexical/
+      │   └── rich-text/
+      │       ├── package.json
+      │       └── ...
+      └── react/
+          ├── package.json
+          └── ...
+```
+
+Note: Scoped packages (with `@`) maintain their scope directory structure.
 
 ## Supported Packages
 

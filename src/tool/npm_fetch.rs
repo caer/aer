@@ -1,17 +1,22 @@
 //! NPM Package Fetcher
 //!
 //! This module provides functionality to download NPM packages and their dependencies
-//! from the NPM registry.
+//! from the NPM registry, extract them into a node_modules structure, and bundle
+//! JavaScript applications that use those packages.
 //!
 //! # Example
 //!
 //! ```no_run
 //! use aer::tool::npm_fetch::NpmFetcher;
 //!
-//! let mut fetcher = NpmFetcher::new("./target");
-//! 
-//! // Fetch a package and all its dependencies
+//! // Download packages
+//! let mut fetcher = NpmFetcher::new("./npm_cache");
 //! fetcher.fetch("@lexical/rich-text", Some("latest")).unwrap();
+//! fetcher.fetch("react", Some("18.2.0")).unwrap();
+//! 
+//! // Extract packages to node_modules and bundle your app
+//! let bundled_code = fetcher.bundle_with_packages("./my-app.js", "./output").unwrap();
+//! std::fs::write("./output/bundle.js", bundled_code).unwrap();
 //! ```
 //!
 //! # Features
@@ -20,11 +25,14 @@
 //! - Recursively fetches all dependencies
 //! - Handles scoped packages (e.g., `@lexical/rich-text`)
 //! - Supports version specifiers like `latest`, `1.0.0`, `^1.0.0`, etc.
+//! - Extracts packages into a node_modules structure
+//! - Bundles JavaScript applications using the downloaded packages
 //!
 //! # Output
 //!
-//! Each package is saved as a tarball in a subdirectory named
+//! Each package is initially saved as a tarball in a subdirectory named
 //! `{package_name}-{version}/package.tgz` under the target directory.
+//! When extracted, packages are organized in a node_modules structure.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -254,6 +262,150 @@ impl NpmFetcher {
         tracing::info!("Saved {} @ {} to {}", package_name, version, tarball_path.display());
 
         Ok(())
+    }
+
+    /// Extracts all downloaded packages into a node_modules-like structure
+    ///
+    /// # Arguments
+    /// * `output_dir` - Directory where the node_modules structure should be created
+    ///
+    /// # Returns
+    /// `Ok(())` if successful, `Err(NpmFetchError)` otherwise
+    pub fn extract_packages<P: AsRef<Path>>(&self, output_dir: P) -> Result<(), NpmFetchError> {
+        let output_dir = output_dir.as_ref();
+        let node_modules_dir = output_dir.join("node_modules");
+        
+        tracing::info!("Extracting packages to {}", node_modules_dir.display());
+
+        // Iterate through all subdirectories in target_dir
+        let entries = fs::read_dir(&self.target_dir)
+            .map_err(|e| NpmFetchError::IoError(format!("Failed to read target directory: {}", e)))?;
+
+        for entry in entries {
+            let entry = entry.map_err(|e| NpmFetchError::IoError(format!("Failed to read directory entry: {}", e)))?;
+            let path = entry.path();
+
+            if path.is_dir() {
+                let tarball_path = path.join("package.tgz");
+                if tarball_path.exists() {
+                    // Extract this tarball
+                    self.extract_tarball(&tarball_path, &node_modules_dir)?;
+                }
+            }
+        }
+
+        tracing::info!("Extraction complete");
+        Ok(())
+    }
+
+    fn extract_tarball(&self, tarball_path: &Path, node_modules_dir: &Path) -> Result<(), NpmFetchError> {
+        use flate2::read::GzDecoder;
+        use tar::Archive;
+
+        tracing::debug!("Extracting {}", tarball_path.display());
+
+        let file = fs::File::open(tarball_path)
+            .map_err(|e| NpmFetchError::IoError(format!("Failed to open tarball: {}", e)))?;
+
+        let decompressor = GzDecoder::new(file);
+        let mut archive = Archive::new(decompressor);
+
+        // Extract to a temporary location first
+        let temp_extract = node_modules_dir.join(".temp_extract");
+        fs::create_dir_all(&temp_extract)
+            .map_err(|e| NpmFetchError::IoError(format!("Failed to create temp directory: {}", e)))?;
+
+        archive.unpack(&temp_extract)
+            .map_err(|e| NpmFetchError::IoError(format!("Failed to extract tarball: {}", e)))?;
+
+        // NPM tarballs contain a 'package' directory, move its contents to node_modules
+        let package_dir = temp_extract.join("package");
+        if package_dir.exists() {
+            // Read package.json to get the real package name
+            let package_json_path = package_dir.join("package.json");
+            if package_json_path.exists() {
+                let package_json_content = fs::read_to_string(&package_json_path)
+                    .map_err(|e| NpmFetchError::IoError(format!("Failed to read package.json: {}", e)))?;
+                
+                let package_info: serde_json::Value = serde_json::from_str(&package_json_content)
+                    .map_err(|e| NpmFetchError::JsonError(format!("Failed to parse package.json: {}", e)))?;
+
+                if let Some(name) = package_info.get("name").and_then(|n| n.as_str()) {
+                    // Handle scoped packages
+                    let target_path = if name.starts_with('@') {
+                        // For @scope/package, create @scope directory first
+                        if let Some(slash_pos) = name.find('/') {
+                            let scope = &name[..slash_pos];
+                            let pkg_name = &name[slash_pos + 1..];
+                            let scope_dir = node_modules_dir.join(scope);
+                            fs::create_dir_all(&scope_dir)
+                                .map_err(|e| NpmFetchError::IoError(format!("Failed to create scope directory: {}", e)))?;
+                            scope_dir.join(pkg_name)
+                        } else {
+                            node_modules_dir.join(name)
+                        }
+                    } else {
+                        node_modules_dir.join(name)
+                    };
+
+                    // Remove existing package if it exists
+                    if target_path.exists() {
+                        fs::remove_dir_all(&target_path)
+                            .map_err(|e| NpmFetchError::IoError(format!("Failed to remove existing package: {}", e)))?;
+                    }
+
+                    // Move the package to node_modules
+                    fs::rename(&package_dir, &target_path)
+                        .map_err(|e| NpmFetchError::IoError(format!("Failed to move package to node_modules: {}", e)))?;
+
+                    tracing::debug!("Extracted {} to {}", name, target_path.display());
+                }
+            }
+        }
+
+        // Clean up temp directory
+        let _ = fs::remove_dir_all(&temp_extract);
+
+        Ok(())
+    }
+
+    /// Bundles a JavaScript entry point that uses the downloaded NPM packages
+    ///
+    /// # Arguments
+    /// * `entry_script` - Path to the JavaScript entry point file
+    /// * `output_dir` - Directory where the node_modules structure was created
+    ///
+    /// # Returns
+    /// `Ok(String)` containing the bundled JavaScript code, or `Err(NpmFetchError)`
+    pub fn bundle_with_packages<P: AsRef<Path>>(&self, entry_script: P, output_dir: P) -> Result<String, NpmFetchError> {
+        use crate::proc::js_bundle::JsBundleProcessor;
+        use crate::proc::{Asset, ProcessesAssets};
+
+        let entry_script = entry_script.as_ref();
+        let output_dir = output_dir.as_ref();
+
+        // First, ensure packages are extracted
+        self.extract_packages(output_dir)?;
+
+        // Create an asset for the entry script
+        let entry_content = fs::read(entry_script)
+            .map_err(|e| NpmFetchError::IoError(format!("Failed to read entry script: {}", e)))?;
+
+        let mut asset = Asset::new(
+            entry_script.to_string_lossy().to_string().into(),
+            entry_content
+        );
+
+        // Use the JS bundle processor
+        let processor = JsBundleProcessor::new();
+        processor.process(&mut asset)
+            .map_err(|e| NpmFetchError::InvalidPackage(format!("Bundling failed: {:?}", e)))?;
+
+        // Get the bundled code
+        let bundled_code = asset.as_text()
+            .map_err(|e| NpmFetchError::InvalidPackage(format!("Failed to get bundled code: {:?}", e)))?;
+
+        Ok(bundled_code.to_string())
     }
 }
 
