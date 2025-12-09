@@ -29,10 +29,16 @@ pub struct JsBundleProcessor {
     minify: bool,
 }
 
+impl Default for JsBundleProcessor {
+    fn default() -> Self {
+        Self { minify: false }
+    }
+}
+
 impl JsBundleProcessor {
     /// Creates a new JS bundle processor
     pub fn new() -> Self {
-        Self { minify: false }
+        Self::default()
     }
 
     /// Creates a new JS bundle processor with minification enabled

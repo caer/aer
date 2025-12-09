@@ -371,12 +371,31 @@ impl NpmFetcher {
 
     /// Bundles a JavaScript entry point that uses the downloaded NPM packages
     ///
+    /// This method:
+    /// 1. Extracts all downloaded packages into `output_dir/node_modules`
+    /// 2. Copies the entry script to the output directory
+    /// 3. Bundles the script with access to the node_modules
+    /// 4. Returns the bundled JavaScript code
+    ///
     /// # Arguments
     /// * `entry_script` - Path to the JavaScript entry point file
-    /// * `output_dir` - Directory where the node_modules structure was created
+    /// * `output_dir` - Directory where the node_modules structure will be created
     ///
     /// # Returns
     /// `Ok(String)` containing the bundled JavaScript code, or `Err(NpmFetchError)`
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use aer::tool::npm_fetch::NpmFetcher;
+    /// let mut fetcher = NpmFetcher::new("./cache");
+    /// fetcher.fetch("lodash", Some("latest")).unwrap();
+    /// 
+    /// let bundled = fetcher.bundle_with_packages(
+    ///     "./my-app.js",
+    ///     "./output"
+    /// ).unwrap();
+    /// std::fs::write("./output/bundle.js", bundled).unwrap();
+    /// ```
     pub fn bundle_with_packages<P: AsRef<Path>>(&self, entry_script: P, output_dir: P) -> Result<String, NpmFetchError> {
         use crate::proc::js_bundle::JsBundleProcessor;
         use crate::proc::{Asset, ProcessesAssets};
@@ -387,19 +406,32 @@ impl NpmFetcher {
         // First, ensure packages are extracted
         self.extract_packages(output_dir)?;
 
-        // Create an asset for the entry script
-        let entry_content = fs::read(entry_script)
+        // Copy the entry script to the output directory so node_modules can be resolved
+        let entry_filename = entry_script.file_name()
+            .ok_or_else(|| NpmFetchError::InvalidPackage("Entry script must be a file".to_string()))?;
+        let temp_entry = output_dir.join(entry_filename);
+        
+        fs::copy(entry_script, &temp_entry)
+            .map_err(|e| NpmFetchError::IoError(format!("Failed to copy entry script: {}", e)))?;
+
+        // Create an asset for the entry script (using the temp location)
+        let entry_content = fs::read(&temp_entry)
             .map_err(|e| NpmFetchError::IoError(format!("Failed to read entry script: {}", e)))?;
 
         let mut asset = Asset::new(
-            entry_script.to_string_lossy().to_string().into(),
+            temp_entry.to_string_lossy().to_string().into(),
             entry_content
         );
 
         // Use the JS bundle processor
         let processor = JsBundleProcessor::new();
-        processor.process(&mut asset)
-            .map_err(|e| NpmFetchError::InvalidPackage(format!("Bundling failed: {:?}", e)))?;
+        let result = processor.process(&mut asset)
+            .map_err(|e| NpmFetchError::InvalidPackage(format!("Bundling failed: {:?}", e)));
+
+        // Clean up the temporary entry script
+        let _ = fs::remove_file(&temp_entry);
+
+        result?;
 
         // Get the bundled code
         let bundled_code = asset.as_text()
