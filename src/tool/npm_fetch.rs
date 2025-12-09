@@ -226,7 +226,11 @@ impl NpmFetcher {
         tracing::info!("Downloading {} @ {} from {}", package_name, version, tarball_url);
 
         // Create package directory
-        let safe_package_name = package_name.replace('/', "_").replace('@', "");
+        // Replace '@' and '/' to create safe filesystem names
+        // Using 'at_' for '@' preserves the scoped package indicator
+        let safe_package_name = package_name
+            .replace('@', "at_")
+            .replace('/', "_");
         let package_dir = self.target_dir.join(format!("{}-{}", safe_package_name, version));
         
         fs::create_dir_all(&package_dir)

@@ -39,11 +39,13 @@ Each package is saved as a tarball in a subdirectory:
 ./packages/
   ├── lodash-4.17.21/
   │   └── package.tgz
-  ├── _lexical_rich-text-0.17.1/
+  ├── at_lexical_rich-text-0.17.1/
   │   └── package.tgz
   └── react-18.2.0/
       └── package.tgz
 ```
+
+Note: Scoped packages (with `@`) are prefixed with `at_` in the directory name.
 
 ## Supported Packages
 
