@@ -26,26 +26,10 @@ use super::{Asset, MediaType, ProcessesAssets, ProcessingError};
 /// ```
 pub struct JsBundleProcessor {
     /// Whether to minify the output.
-    minify: bool,
-}
-
-impl Default for JsBundleProcessor {
-    fn default() -> Self {
-        Self { minify: false }
-    }
+    pub minify: bool,
 }
 
 impl JsBundleProcessor {
-    /// Creates a new JS bundle processor
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Creates a new JS bundle processor with minification enabled
-    pub fn with_minify(minify: bool) -> Self {
-        Self { minify }
-    }
-
     /// Bundles the JavaScript file at `entry_path` and returns the bundled code.
     ///
     /// Modules are resolved relative to the entry point's parent directory.
@@ -150,7 +134,7 @@ mod tests {
 
     #[test]
     fn skips_non_javascript_assets() {
-        let processor = JsBundleProcessor::new();
+        let processor = JsBundleProcessor { minify: false };
 
         // Create a non-JavaScript asset.
         let mut css_asset = Asset::new("style.css".into(), "body {}".as_bytes().to_vec());
@@ -162,7 +146,7 @@ mod tests {
 
     #[test]
     fn bundles_javascript() {
-        let processor = JsBundleProcessor::new();
+        let processor = JsBundleProcessor { minify: false };
 
         // Create a JavaScript asset pointing to our test file.
         let mut js_asset = Asset::new("test/js_bundle/entry.js".into(), "".as_bytes().to_vec());

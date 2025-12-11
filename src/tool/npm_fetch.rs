@@ -4,35 +4,117 @@
 //! from the NPM registry, extract them into a node_modules structure, and bundle
 //! JavaScript applications that use those packages.
 //!
-//! # Example
+//! # Basic Usage
+//!
+//! ## Downloading Packages
+//!
+//! ```no_run
+//! use aer::tool::npm_fetch::NpmFetcher;
+//!
+//! let mut fetcher = NpmFetcher::new("./packages");
+//! 
+//! // Fetch a package with latest version
+//! fetcher.fetch("lodash", Some("latest")).unwrap();
+//! 
+//! // Fetch a scoped package
+//! fetcher.fetch("@lexical/rich-text", Some("latest")).unwrap();
+//! 
+//! // Fetch a specific version
+//! fetcher.fetch("react", Some("18.2.0")).unwrap();
+//! ```
+//!
+//! ## Bundling Applications
+//!
+//! After downloading packages, bundle a JavaScript application that uses them:
 //!
 //! ```no_run
 //! use aer::tool::npm_fetch::NpmFetcher;
 //!
 //! // Download packages
 //! let mut fetcher = NpmFetcher::new("./npm_cache");
-//! fetcher.fetch("@lexical/rich-text", Some("latest")).unwrap();
-//! fetcher.fetch("react", Some("18.2.0")).unwrap();
-//! 
-//! // Extract packages to node_modules and bundle your app
-//! let bundled_code = fetcher.bundle_with_packages("./my-app.js", "./output").unwrap();
+//! fetcher.fetch("lodash", Some("latest")).unwrap();
+//! fetcher.fetch("react", Some("latest")).unwrap();
+//!
+//! // Bundle your application
+//! let bundled_code = fetcher.bundle_with_packages(
+//!     "./src/app.js",  // Your entry point
+//!     "./output"       // Where node_modules will be created
+//! ).unwrap();
+//!
+//! // Save the bundled output
 //! std::fs::write("./output/bundle.js", bundled_code).unwrap();
 //! ```
+//!
+//! Your `app.js` entry point can import packages normally:
+//!
+//! ```javascript
+//! import _ from 'lodash';
+//! import React from 'react';
+//!
+//! export function myApp() {
+//!     const data = _.chunk(['a', 'b', 'c', 'd'], 2);
+//!     return React.createElement('div', null, 'Hello!');
+//! }
+//! ```
+//!
+//! ## Extracting Packages Only
+//!
+//! If you just want to extract packages without bundling:
+//!
+//! ```no_run
+//! use aer::tool::npm_fetch::NpmFetcher;
+//!
+//! let fetcher = NpmFetcher::new("./packages");
+//! fetcher.extract_packages("./output").unwrap();
+//! ```
+//!
+//! This creates a `./output/node_modules/` directory with all downloaded packages.
 //!
 //! # Features
 //!
 //! - Downloads NPM packages as tarballs from the NPM registry
 //! - Recursively fetches all dependencies
-//! - Handles scoped packages (e.g., `@lexical/rich-text`)
-//! - Supports version specifiers like `latest`, `1.0.0`, `^1.0.0`, etc.
+//! - Handles scoped packages (e.g., `@lexical/rich-text`, `@tiptap/core`)
+//! - Supports version specifiers (e.g., `latest`, `1.0.0`, `^1.0.0`, `~1.2.3`)
 //! - Extracts packages into a node_modules structure
 //! - Bundles JavaScript applications using the downloaded packages
 //!
-//! # Output
+//! # Output Structure
 //!
-//! Each package is initially saved as a tarball in a subdirectory named
-//! `{package_name}-{version}/package.tgz` under the target directory.
-//! When extracted, packages are organized in a node_modules structure.
+//! ## Downloaded Tarballs
+//!
+//! Each package is initially saved as a tarball:
+//!
+//! ```text
+//! ./packages/
+//!   ├── lodash-4.17.21/
+//!   │   └── package.tgz
+//!   ├── at_lexical_rich-text-0.17.1/
+//!   │   └── package.tgz
+//!   └── react-18.2.0/
+//!       └── package.tgz
+//! ```
+//!
+//! ## Extracted node_modules
+//!
+//! After extraction, packages are organized in a node_modules structure:
+//!
+//! ```text
+//! ./output/
+//!   └── node_modules/
+//!       ├── lodash/
+//!       │   ├── package.json
+//!       │   └── ...
+//!       ├── @lexical/
+//!       │   └── rich-text/
+//!       │       ├── package.json
+//!       │       └── ...
+//!       └── react/
+//!           ├── package.json
+//!           └── ...
+//! ```
+//!
+//! Note: Scoped packages (with `@`) maintain their scope directory structure.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -428,7 +510,7 @@ impl NpmFetcher {
         );
 
         // Use the JS bundle processor
-        let processor = JsBundleProcessor::new();
+        let processor = JsBundleProcessor { minify: false };
         let result = processor.process(&mut asset)
             .map_err(|e| NpmFetchError::InvalidPackage(format!("Bundling failed: {:?}", e)));
 
@@ -453,7 +535,7 @@ mod tests {
 
     #[test]
     fn test_clean_version_spec() {
-        let fetcher = NpmFetcher::new("/tmp");
+        let fetcher = NpmFetcher::new(std::env::temp_dir());
         
         assert_eq!(fetcher.clean_version_spec("^1.0.0"), "1.0.0");
         assert_eq!(fetcher.clean_version_spec("~1.2.3"), "1.2.3");
