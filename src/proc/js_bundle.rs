@@ -26,7 +26,7 @@ use super::{Asset, MediaType, ProcessesAssets, ProcessingError};
 /// ```
 pub struct JsBundleProcessor {
     /// Whether to minify the output.
-    minify: bool,
+    pub minify: bool,
 }
 
 impl JsBundleProcessor {
