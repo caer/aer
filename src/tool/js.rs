@@ -32,10 +32,12 @@
 //!
 //! ```text
 //! ./packages/
-//!   ├── at_lexical_rich-text-0.17.1/
-//!   │   └── package.tgz
-//!   └── react-18.2.0/
-//!       └── package.tgz
+//!   └── node_modules/
+//!       ├── @lexical/
+//!       │   └── rich-text/
+//!       │       └── 0.17.1.tgz
+//!       └── react/
+//!           └── 18.2.0.tgz
 //! ```
 //!
 //! ## Extracted Modules
@@ -277,6 +279,35 @@ impl JsModuleManager {
         }
     }
 
+    /// Returns the tarball path inside the cache using a node_modules-like layout
+    fn module_tarball_path(
+        &self,
+        module_name: &str,
+        version: &str,
+    ) -> Result<PathBuf, JsModuleError> {
+        let mut path = self.cache_dir.join("node_modules");
+        let mut saw_component = false;
+
+        for part in module_name.split('/') {
+            if part.is_empty() || part == "." || part == ".." {
+                return Err(JsModuleError::InvalidModule(format!(
+                    "Invalid module component: {}",
+                    module_name
+                )));
+            }
+            saw_component = true;
+            path = path.join(part);
+        }
+
+        if !saw_component {
+            return Err(JsModuleError::InvalidModule(
+                "Module name must not be empty".to_string(),
+            ));
+        }
+
+        Ok(path.join(format!("{}.tgz", version)))
+    }
+
     fn download_tarball(
         &self,
         module_name: &str,
@@ -290,13 +321,16 @@ impl JsModuleManager {
             tarball_url
         );
 
-        // Create module directory
-        // Replace '@' and '/' to create safe filesystem names
-        // Using 'at_' for '@' preserves the scoped package indicator
-        let safe_module_name = module_name.replace('@', "at_").replace('/', "_");
-        let module_dir = self
-            .cache_dir
-            .join(format!("{}-{}", safe_module_name, version));
+        let tarball_path = self.module_tarball_path(module_name, version)?;
+        let module_dir = tarball_path
+            .parent()
+            .ok_or_else(|| {
+                JsModuleError::InvalidModule(format!(
+                    "Invalid module path for {} @ {}",
+                    module_name, version
+                ))
+            })?
+            .to_path_buf();
 
         fs::create_dir_all(&module_dir).map_err(|e| {
             JsModuleError::IoError(format!(
@@ -312,7 +346,6 @@ impl JsModuleManager {
         })?;
 
         // Save tarball to file
-        let tarball_path = module_dir.join("package.tgz");
         let mut file = fs::File::create(&tarball_path).map_err(|e| {
             JsModuleError::IoError(format!(
                 "Failed to create file {}: {}",
@@ -347,29 +380,49 @@ impl JsModuleManager {
         let output_dir = output_dir.as_ref();
         let node_modules_dir = output_dir.join("node_modules");
 
-        tracing::info!("Extracting modules to {}", node_modules_dir.display());
-
-        // Iterate through all subdirectories in cache_dir
-        let entries = fs::read_dir(&self.cache_dir).map_err(|e| {
-            JsModuleError::IoError(format!("Failed to read cache directory: {}", e))
+        fs::create_dir_all(&node_modules_dir).map_err(|e| {
+            JsModuleError::IoError(format!("Failed to create node_modules directory: {}", e))
         })?;
 
-        for entry in entries {
+        tracing::info!("Extracting modules to {}", node_modules_dir.display());
+
+        let mut tarballs = Vec::new();
+        self.collect_tarballs(&self.cache_dir, &mut tarballs)?;
+        tarballs.sort();
+
+        for tarball_path in tarballs {
+            self.extract_tarball(&tarball_path, &node_modules_dir)?;
+        }
+
+        tracing::info!("Extraction complete");
+        Ok(())
+    }
+
+    fn collect_tarballs(
+        &self,
+        dir: &Path,
+        tarballs: &mut Vec<PathBuf>,
+    ) -> Result<(), JsModuleError> {
+        for entry in fs::read_dir(dir)
+            .map_err(|e| JsModuleError::IoError(format!("Failed to read cache directory: {}", e)))?
+        {
             let entry = entry.map_err(|e| {
                 JsModuleError::IoError(format!("Failed to read directory entry: {}", e))
             })?;
             let path = entry.path();
 
             if path.is_dir() {
-                let tarball_path = path.join("package.tgz");
-                if tarball_path.exists() {
-                    // Extract this tarball
-                    self.extract_tarball(&tarball_path, &node_modules_dir)?;
-                }
+                self.collect_tarballs(&path, tarballs)?;
+            } else if path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("tgz"))
+                .unwrap_or(false)
+            {
+                tarballs.push(path);
             }
         }
 
-        tracing::info!("Extraction complete");
         Ok(())
     }
 
