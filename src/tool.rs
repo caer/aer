@@ -2,4 +2,4 @@
 //! color palette generators.
 
 pub mod color;
-pub mod npm_fetch;
+pub mod js;
