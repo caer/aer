@@ -1,84 +1,28 @@
-//! JavaScript Module Management
-//!
-//! This module provides comprehensive functionality for working with JavaScript modules
-//! from the NPM registry. It handles downloading packages and their dependencies,
-//! extracting them into a proper node_modules structure, and bundling JavaScript
-//! applications for direct use in web apps.
+//! JavaScript module downloading (via NPM) and bundling.
 //!
 //! # Basic Usage
 //!
-//! ## Fetching JavaScript Modules
-//!
 //! ```no_run
-//! use aer::tool::js::JsModuleManager;
-//!
-//! let mut manager = JsModuleManager::new("./packages");
-//!
-//! // Fetch a package with latest version
-//! manager.fetch("lodash", Some("latest")).unwrap();
-//!
-//! // Fetch a scoped package
-//! manager.fetch("@lexical/rich-text", Some("latest")).unwrap();
-//!
-//! // Fetch a specific version
-//! manager.fetch("react", Some("18.2.0")).unwrap();
-//! ```
-//!
-//! ## Bundling Applications
-//!
-//! After downloading modules, bundle a JavaScript application that uses them:
-//!
-//! ```no_run
-//! use aer::tool::js::JsModuleManager;
+//! # use aer::tool::js::JsModuleManager;
 //!
 //! // Download modules
-//! let mut manager = JsModuleManager::new("./cache");
-//! manager.fetch("lodash", Some("latest")).unwrap();
-//! manager.fetch("react", Some("latest")).unwrap();
+//! let mut manager = JsModuleManager::new("./packages");
+//! manager.fetch("@tiptap/core", Some("latest")).unwrap();
 //!
-//! // Bundle your application
+//! // Extract modules
+//! manager.extract_modules("./modules").unwrap();
+//!
+//! // Bundle modules
 //! let bundled_code = manager.bundle(
 //!     "./src/app.js",  // Your entry point
-//!     "./output"       // Where node_modules will be created
+//!     "./modules"
 //! ).unwrap();
 //!
 //! // Save the bundled output
-//! std::fs::write("./output/bundle.js", bundled_code).unwrap();
+//! std::fs::write("./modules/bundle.js", bundled_code).unwrap();
 //! ```
 //!
-//! Your `app.js` entry point can import modules normally:
-//!
-//! ```javascript
-//! import _ from 'lodash';
-//! import React from 'react';
-//!
-//! export function myApp() {
-//!     const data = _.chunk(['a', 'b', 'c', 'd'], 2);
-//!     return React.createElement('div', null, 'Hello!');
-//! }
-//! ```
-//!
-//! ## Extracting Modules Only
-//!
-//! If you just want to extract modules without bundling:
-//!
-//! ```no_run
-//! use aer::tool::js::JsModuleManager;
-//!
-//! let manager = JsModuleManager::new("./packages");
-//! manager.extract_modules("./output").unwrap();
-//! ```
-//!
-//! This creates a `./output/node_modules/` directory with all downloaded modules.
-//!
-//! # Features
-//!
-//! - **NPM Registry Integration**: Downloads JavaScript modules as tarballs from NPM
-//! - **Dependency Resolution**: Recursively fetches all module dependencies
-//! - **Scoped Packages**: Full support for scoped packages (e.g., `@lexical/rich-text`)
-//! - **Version Management**: Supports version specifiers (`latest`, `1.0.0`, `^1.0.0`, `~1.2.3`)
-//! - **Module Extraction**: Extracts modules into standard node_modules structure
-//! - **Application Bundling**: Bundles JavaScript apps with module resolution for web deployment
+//! This creates a `./modules/node_modules/` directory with all downloaded modules.
 //!
 //! # Directory Structure
 //!
@@ -87,9 +31,7 @@
 //! Each module is initially cached as a tarball:
 //!
 //! ```text
-//! ./cache/
-//!   ├── lodash-4.17.21/
-//!   │   └── package.tgz
+//! ./packages/
 //!   ├── at_lexical_rich-text-0.17.1/
 //!   │   └── package.tgz
 //!   └── react-18.2.0/
@@ -101,11 +43,8 @@
 //! After extraction, modules follow the standard Node.js structure:
 //!
 //! ```text
-//! ./output/
+//! ./modules/
 //!   └── node_modules/
-//!       ├── lodash/
-//!       │   ├── package.json
-//!       │   └── ...
 //!       ├── @lexical/
 //!       │   └── rich-text/
 //!       │       ├── package.json
