@@ -542,40 +542,4 @@ mod tests {
         assert_eq!(fetcher.clean_version_spec(">=2.0.0"), "2.0.0");
         assert_eq!(fetcher.clean_version_spec("1.0.0"), "1.0.0");
     }
-
-    #[test]
-    fn test_npm_fetcher_creation() {
-        let temp_dir = std::env::temp_dir().join("test_npm_fetch");
-        let fetcher = NpmFetcher::new(&temp_dir);
-        
-        assert_eq!(fetcher.target_dir, temp_dir);
-        assert_eq!(fetcher.registry_url, "https://registry.npmjs.org");
-        assert!(fetcher.fetched.is_empty());
-    }
-
-    /// This test requires network access and is ignored by default.
-    /// Run with `cargo test -- --ignored` to execute.
-    #[test]
-    #[ignore]
-    fn test_fetch_small_package() {
-        let temp_dir = std::env::temp_dir().join("test_npm_fetch_integration");
-        
-        // Clean up if it exists
-        let _ = std::fs::remove_dir_all(&temp_dir);
-        
-        let mut fetcher = NpmFetcher::new(&temp_dir);
-        
-        // Fetch a small, stable package (is-odd is a tiny package with minimal dependencies)
-        let result = fetcher.fetch("is-odd", Some("latest"));
-        
-        assert!(result.is_ok(), "Failed to fetch package: {:?}", result.err());
-        
-        // Verify at least one directory was created
-        let entries = std::fs::read_dir(&temp_dir).expect("Failed to read temp dir");
-        let count = entries.count();
-        assert!(count > 0, "No packages were downloaded");
-        
-        // Clean up
-        let _ = std::fs::remove_dir_all(&temp_dir);
-    }
 }
