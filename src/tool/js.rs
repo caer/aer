@@ -436,6 +436,8 @@ impl JsModuleManager {
 
         tracing::debug!("Extracting {}", tarball_path.display());
 
+        let target_path = self.target_path_from_tarball(tarball_path, node_modules_dir)?;
+
         let file = fs::File::open(tarball_path)
             .map_err(|e| JsModuleError::IoError(format!("Failed to open tarball: {}", e)))?;
 
@@ -455,61 +457,29 @@ impl JsModuleManager {
         // NPM tarballs contain a 'package' directory, move its contents to node_modules
         let package_dir = temp_extract.join("package");
         if package_dir.exists() {
-            // Read package.json to get the real module name
-            let package_json_path = package_dir.join("package.json");
-            if package_json_path.exists() {
-                let package_json_content = fs::read_to_string(&package_json_path).map_err(|e| {
-                    JsModuleError::IoError(format!("Failed to read package.json: {}", e))
+            if let Some(parent) = target_path.parent() {
+                fs::create_dir_all(parent).map_err(|e| {
+                    JsModuleError::IoError(format!(
+                        "Failed to create module parent directory: {}",
+                        e
+                    ))
                 })?;
-
-                let package_info: serde_json::Value = serde_json::from_str(&package_json_content)
-                    .map_err(|e| {
-                    JsModuleError::JsonError(format!("Failed to parse package.json: {}", e))
-                })?;
-
-                if let Some(name) = package_info.get("name").and_then(|n| n.as_str()) {
-                    // Handle scoped packages
-                    let target_path = if name.starts_with('@') {
-                        // For @scope/package, create @scope directory first
-                        if let Some(slash_pos) = name.find('/') {
-                            let scope = &name[..slash_pos];
-                            let pkg_name = &name[slash_pos + 1..];
-                            let scope_dir = node_modules_dir.join(scope);
-                            fs::create_dir_all(&scope_dir).map_err(|e| {
-                                JsModuleError::IoError(format!(
-                                    "Failed to create scope directory: {}",
-                                    e
-                                ))
-                            })?;
-                            scope_dir.join(pkg_name)
-                        } else {
-                            node_modules_dir.join(name)
-                        }
-                    } else {
-                        node_modules_dir.join(name)
-                    };
-
-                    // Remove existing module if it exists
-                    if target_path.exists() {
-                        fs::remove_dir_all(&target_path).map_err(|e| {
-                            JsModuleError::IoError(format!(
-                                "Failed to remove existing module: {}",
-                                e
-                            ))
-                        })?;
-                    }
-
-                    // Move the module to node_modules
-                    fs::rename(&package_dir, &target_path).map_err(|e| {
-                        JsModuleError::IoError(format!(
-                            "Failed to move module to node_modules: {}",
-                            e
-                        ))
-                    })?;
-
-                    tracing::debug!("Extracted {} to {}", name, target_path.display());
-                }
             }
+
+            if target_path.exists() {
+                fs::remove_dir_all(&target_path).map_err(|e| {
+                    JsModuleError::IoError(format!(
+                        "Failed to remove existing module: {}",
+                        e
+                    ))
+                })?;
+            }
+
+            fs::rename(&package_dir, &target_path).map_err(|e| {
+                JsModuleError::IoError(format!("Failed to move module to node_modules: {}", e))
+            })?;
+
+            tracing::debug!("Extracted to {}", target_path.display());
         }
 
         // Clean up temp directory
@@ -518,6 +488,56 @@ impl JsModuleManager {
         }
 
         Ok(())
+    }
+
+    fn target_path_from_tarball(
+        &self,
+        tarball_path: &Path,
+        node_modules_dir: &Path,
+    ) -> Result<PathBuf, JsModuleError> {
+        let cache_node_modules = self.cache_dir.join("node_modules");
+
+        if !tarball_path.starts_with(&cache_node_modules) {
+            return Err(JsModuleError::InvalidModule(format!(
+                "Tarball not in cache: {}",
+                tarball_path.display()
+            )));
+        }
+
+        if tarball_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.eq_ignore_ascii_case("tgz"))
+            .unwrap_or(false)
+            == false
+        {
+            return Err(JsModuleError::InvalidModule(format!(
+                "Unexpected tarball extension for {}",
+                tarball_path.display()
+            )));
+        }
+
+        let module_dir = tarball_path.parent().ok_or_else(|| {
+            JsModuleError::InvalidModule(format!(
+                "Invalid tarball path: {}",
+                tarball_path.display()
+            ))
+        })?;
+
+        let relative = module_dir.strip_prefix(&cache_node_modules).map_err(|_| {
+            JsModuleError::InvalidModule(format!(
+                "Tarball path outside cache: {}",
+                tarball_path.display()
+            ))
+        })?;
+
+        if relative.components().next().is_none() {
+            return Err(JsModuleError::InvalidModule(
+                "Module path cannot be empty".to_string(),
+            ));
+        }
+
+        Ok(node_modules_dir.join(relative))
     }
 
     /// Bundles a JavaScript application that uses the downloaded modules
