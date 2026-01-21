@@ -1,4 +1,4 @@
-//! Interactive CLI tools, like color palette 
+//! Interactive CLI tools, like color palette
 //! generators and JS bundlers.
 
 pub mod color;

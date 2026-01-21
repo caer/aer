@@ -63,35 +63,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
-
-/// Error types for JavaScript module operations
-#[derive(Debug)]
-pub enum JsModuleError {
-    /// HTTP request failed
-    HttpError(String),
-    /// JSON parsing failed
-    JsonError(String),
-    /// File system operation failed
-    IoError(String),
-    /// Module not found
-    ModuleNotFound(String),
-    /// Invalid module name or version
-    InvalidModule(String),
-}
-
-impl std::fmt::Display for JsModuleError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            JsModuleError::HttpError(msg) => write!(f, "HTTP error: {}", msg),
-            JsModuleError::JsonError(msg) => write!(f, "JSON error: {}", msg),
-            JsModuleError::IoError(msg) => write!(f, "IO error: {}", msg),
-            JsModuleError::ModuleNotFound(pkg) => write!(f, "Module not found: {}", pkg),
-            JsModuleError::InvalidModule(msg) => write!(f, "Invalid module: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for JsModuleError {}
+use snafu::{ResultExt, Snafu};
 
 /// Response from NPM registry API for package metadata
 #[derive(Debug, Deserialize)]
@@ -174,7 +146,10 @@ impl JsModuleManager {
 
         // Get version metadata
         let version_metadata = metadata.versions.get(&version).ok_or_else(|| {
-            JsModuleError::ModuleNotFound(format!("{} @ {}", module_name, version))
+            ModuleNotFoundSnafu {
+                module: format!("{module_name} @ {version}"),
+            }
+            .build()
         })?;
 
         // Download the tarball
@@ -219,14 +194,15 @@ impl JsModuleManager {
 
         let mut response = ureq::get(&url)
             .call()
-            .map_err(|e| JsModuleError::HttpError(format!("Failed to fetch {}: {}", url, e)))?;
+            .context(HttpSnafu { url: url.clone() })?;
 
-        let body = response.body_mut().read_to_string().map_err(|e| {
-            JsModuleError::HttpError(format!("Failed to read response body: {}", e))
-        })?;
+        let body = response
+            .body_mut()
+            .read_to_string()
+            .context(ReadBodySnafu)?;
 
-        serde_json::from_str(&body).map_err(|e| {
-            JsModuleError::JsonError(format!("Failed to parse JSON for {}: {}", module_name, e))
+        serde_json::from_str(&body).context(JsonSnafu {
+            module: module_name,
         })
     }
 
@@ -255,31 +231,22 @@ impl JsModuleManager {
         // For now, simple version matching - could be enhanced with semver
         // Just use the latest version if we can't resolve
         metadata.dist_tags.get("latest").cloned().ok_or_else(|| {
-            JsModuleError::InvalidModule(format!(
-                "Could not resolve version {} for module",
-                version_spec
-            ))
+            InvalidModuleSnafu {
+                message: format!("Could not resolve version {version_spec}"),
+            }
+            .build()
         })
     }
 
     fn clean_version_spec(&self, version_spec: &str) -> String {
-        // Remove common version prefixes
-        let trimmed = version_spec.trim();
-        if trimmed.starts_with(">=") || trimmed.starts_with("<=") {
-            trimmed[2..].trim().to_string()
-        } else if trimmed.starts_with('^')
-            || trimmed.starts_with('~')
-            || trimmed.starts_with('>')
-            || trimmed.starts_with('<')
-            || trimmed.starts_with('=')
-        {
-            trimmed[1..].trim().to_string()
-        } else {
-            trimmed.to_string()
-        }
+        version_spec
+            .trim()
+            .trim_start_matches(['^', '~', '>', '<', '='])
+            .trim()
+            .to_string()
     }
 
-    /// Returns the tarball path inside the cache using a node_modules-like layout
+    /// Returns the tarball path inside the cache using a node_modules-like layout.
     fn module_tarball_path(
         &self,
         module_name: &str,
@@ -289,21 +256,22 @@ impl JsModuleManager {
         let mut saw_component = false;
 
         for part in module_name.split('/') {
-            if part.is_empty() || part == "." || part == ".." {
-                return Err(JsModuleError::InvalidModule(format!(
-                    "Invalid module component: {}",
-                    module_name
-                )));
-            }
+            snafu::ensure!(
+                !part.is_empty() && part != "." && part != "..",
+                InvalidModuleSnafu {
+                    message: format!("Invalid module component: {module_name}"),
+                }
+            );
             saw_component = true;
             path = path.join(part);
         }
 
-        if !saw_component {
-            return Err(JsModuleError::InvalidModule(
-                "Module name must not be empty".to_string(),
-            ));
-        }
+        snafu::ensure!(
+            saw_component,
+            InvalidModuleSnafu {
+                message: "Module name must not be empty",
+            }
+        );
 
         Ok(path.join(format!("{}.tgz", version)))
     }
@@ -322,42 +290,32 @@ impl JsModuleManager {
         );
 
         let tarball_path = self.module_tarball_path(module_name, version)?;
-        let module_dir = tarball_path
-            .parent()
-            .ok_or_else(|| {
-                JsModuleError::InvalidModule(format!(
-                    "Invalid module path for {} @ {}",
-                    module_name, version
-                ))
-            })?
-            .to_path_buf();
+        let module_dir = tarball_path.parent().ok_or_else(|| {
+            InvalidModuleSnafu {
+                message: format!("Invalid module path for {module_name} @ {version}"),
+            }
+            .build()
+        })?;
 
-        fs::create_dir_all(&module_dir).map_err(|e| {
-            JsModuleError::IoError(format!(
-                "Failed to create directory {}: {}",
-                module_dir.display(),
-                e
-            ))
+        fs::create_dir_all(module_dir).context(IoSnafu {
+            message: format!("Failed to create directory {}", module_dir.display()),
         })?;
 
         // Download tarball
-        let mut response = ureq::get(tarball_url).call().map_err(|e| {
-            JsModuleError::HttpError(format!("Failed to download {}: {}", tarball_url, e))
-        })?;
+        let mut response = ureq::get(tarball_url)
+            .call()
+            .context(HttpSnafu { url: tarball_url })?;
 
         // Save tarball to file
-        let mut file = fs::File::create(&tarball_path).map_err(|e| {
-            JsModuleError::IoError(format!(
-                "Failed to create file {}: {}",
-                tarball_path.display(),
-                e
-            ))
+        let mut file = fs::File::create(&tarball_path).context(IoSnafu {
+            message: format!("Failed to create file {}", tarball_path.display()),
         })?;
 
         // Use as_reader() to get a reader from the body
         let mut reader = response.body_mut().as_reader();
-        std::io::copy(&mut reader, &mut file)
-            .map_err(|e| JsModuleError::IoError(format!("Failed to write tarball: {}", e)))?;
+        std::io::copy(&mut reader, &mut file).context(IoSnafu {
+            message: "Failed to write tarball",
+        })?;
 
         tracing::info!(
             "Saved {} @ {} to {}",
@@ -369,7 +327,7 @@ impl JsModuleManager {
         Ok(())
     }
 
-    /// Extracts all downloaded modules into a node_modules structure
+    /// Extracts all downloaded modules into a node_modules structure.
     ///
     /// # Arguments
     /// * `output_dir` - Directory where the node_modules structure should be created
@@ -380,14 +338,14 @@ impl JsModuleManager {
         let output_dir = output_dir.as_ref();
         let node_modules_dir = output_dir.join("node_modules");
 
-        fs::create_dir_all(&node_modules_dir).map_err(|e| {
-            JsModuleError::IoError(format!("Failed to create node_modules directory: {}", e))
+        fs::create_dir_all(&node_modules_dir).context(IoSnafu {
+            message: "Failed to create node_modules directory",
         })?;
 
         tracing::info!("Extracting modules to {}", node_modules_dir.display());
 
         let mut tarballs = Vec::new();
-        self.collect_tarballs(&self.cache_dir, &mut tarballs)?;
+        Self::collect_tarballs(&self.cache_dir, &mut tarballs)?;
         tarballs.sort();
 
         for tarball_path in tarballs {
@@ -398,26 +356,21 @@ impl JsModuleManager {
         Ok(())
     }
 
-    fn collect_tarballs(
-        &self,
-        dir: &Path,
-        tarballs: &mut Vec<PathBuf>,
-    ) -> Result<(), JsModuleError> {
-        for entry in fs::read_dir(dir)
-            .map_err(|e| JsModuleError::IoError(format!("Failed to read cache directory: {}", e)))?
-        {
-            let entry = entry.map_err(|e| {
-                JsModuleError::IoError(format!("Failed to read directory entry: {}", e))
+    fn collect_tarballs(dir: &Path, tarballs: &mut Vec<PathBuf>) -> Result<(), JsModuleError> {
+        for entry in fs::read_dir(dir).context(IoSnafu {
+            message: "Failed to read cache directory",
+        })? {
+            let entry = entry.context(IoSnafu {
+                message: "Failed to read directory entry",
             })?;
             let path = entry.path();
 
             if path.is_dir() {
-                self.collect_tarballs(&path, tarballs)?;
+                Self::collect_tarballs(&path, tarballs)?;
             } else if path
                 .extension()
                 .and_then(|ext| ext.to_str())
-                .map(|ext| ext.eq_ignore_ascii_case("tgz"))
-                .unwrap_or(false)
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("tgz"))
             {
                 tarballs.push(path);
             }
@@ -438,45 +391,40 @@ impl JsModuleManager {
 
         let target_path = self.target_path_from_tarball(tarball_path, node_modules_dir)?;
 
-        let file = fs::File::open(tarball_path)
-            .map_err(|e| JsModuleError::IoError(format!("Failed to open tarball: {}", e)))?;
+        let file = fs::File::open(tarball_path).context(IoSnafu {
+            message: format!("Failed to open tarball {}", tarball_path.display()),
+        })?;
 
         let decompressor = GzDecoder::new(file);
         let mut archive = Archive::new(decompressor);
 
         // Extract to a temporary location first
         let temp_extract = node_modules_dir.join(".temp_extract");
-        fs::create_dir_all(&temp_extract).map_err(|e| {
-            JsModuleError::IoError(format!("Failed to create temp directory: {}", e))
+        fs::create_dir_all(&temp_extract).context(IoSnafu {
+            message: "Failed to create temp directory",
         })?;
 
-        archive
-            .unpack(&temp_extract)
-            .map_err(|e| JsModuleError::IoError(format!("Failed to extract tarball: {}", e)))?;
+        archive.unpack(&temp_extract).context(IoSnafu {
+            message: "Failed to extract tarball",
+        })?;
 
         // NPM tarballs contain a 'package' directory, move its contents to node_modules
         let package_dir = temp_extract.join("package");
         if package_dir.exists() {
             if let Some(parent) = target_path.parent() {
-                fs::create_dir_all(parent).map_err(|e| {
-                    JsModuleError::IoError(format!(
-                        "Failed to create module parent directory: {}",
-                        e
-                    ))
+                fs::create_dir_all(parent).context(IoSnafu {
+                    message: "Failed to create module parent directory",
                 })?;
             }
 
             if target_path.exists() {
-                fs::remove_dir_all(&target_path).map_err(|e| {
-                    JsModuleError::IoError(format!(
-                        "Failed to remove existing module: {}",
-                        e
-                    ))
+                fs::remove_dir_all(&target_path).context(IoSnafu {
+                    message: "Failed to remove existing module",
                 })?;
             }
 
-            fs::rename(&package_dir, &target_path).map_err(|e| {
-                JsModuleError::IoError(format!("Failed to move module to node_modules: {}", e))
+            fs::rename(&package_dir, &target_path).context(IoSnafu {
+                message: "Failed to move module to node_modules",
             })?;
 
             tracing::debug!("Extracted to {}", target_path.display());
@@ -497,50 +445,31 @@ impl JsModuleManager {
     ) -> Result<PathBuf, JsModuleError> {
         let cache_node_modules = self.cache_dir.join("node_modules");
 
-        if !tarball_path.starts_with(&cache_node_modules) {
-            return Err(JsModuleError::InvalidModule(format!(
-                "Tarball not in cache: {}",
-                tarball_path.display()
-            )));
-        }
-
-        if tarball_path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| ext.eq_ignore_ascii_case("tgz"))
-            .unwrap_or(false)
-            == false
-        {
-            return Err(JsModuleError::InvalidModule(format!(
-                "Unexpected tarball extension for {}",
-                tarball_path.display()
-            )));
-        }
-
         let module_dir = tarball_path.parent().ok_or_else(|| {
-            JsModuleError::InvalidModule(format!(
-                "Invalid tarball path: {}",
-                tarball_path.display()
-            ))
+            InvalidModuleSnafu {
+                message: format!("Invalid tarball path: {}", tarball_path.display()),
+            }
+            .build()
         })?;
 
         let relative = module_dir.strip_prefix(&cache_node_modules).map_err(|_| {
-            JsModuleError::InvalidModule(format!(
-                "Tarball path outside cache: {}",
-                tarball_path.display()
-            ))
+            InvalidModuleSnafu {
+                message: format!("Tarball path outside cache: {}", tarball_path.display()),
+            }
+            .build()
         })?;
 
-        if relative.components().next().is_none() {
-            return Err(JsModuleError::InvalidModule(
-                "Module path cannot be empty".to_string(),
-            ));
-        }
+        snafu::ensure!(
+            relative.components().next().is_some(),
+            InvalidModuleSnafu {
+                message: "Module path cannot be empty",
+            }
+        );
 
         Ok(node_modules_dir.join(relative))
     }
 
-    /// Bundles a JavaScript application that uses the downloaded modules
+    /// Bundles a JavaScript application that uses the downloaded modules.
     ///
     /// This method:
     /// 1. Extracts all downloaded modules into `output_dir/node_modules`
@@ -581,20 +510,25 @@ impl JsModuleManager {
         // First, ensure modules are extracted
         self.extract_modules(output_dir)?;
 
-        // Copy the entry script to the output directory so node_modules can be resolved
+        // Copy the entry script to the output directory so node_modules can be resolved.
         // This is necessary because the JS bundler uses the entry script's parent directory
-        // as the working directory for module resolution
+        // as the working directory for module resolution.
         let entry_filename = entry_script.file_name().ok_or_else(|| {
-            JsModuleError::InvalidModule("Entry script must be a file".to_string())
+            InvalidModuleSnafu {
+                message: "Entry script must be a file",
+            }
+            .build()
         })?;
         let temp_entry = output_dir.join(entry_filename);
 
-        fs::copy(entry_script, &temp_entry)
-            .map_err(|e| JsModuleError::IoError(format!("Failed to copy entry script: {}", e)))?;
+        fs::copy(entry_script, &temp_entry).context(IoSnafu {
+            message: "Failed to copy entry script",
+        })?;
 
         // Create an asset for the entry script (using the temp location)
-        let entry_content = fs::read(&temp_entry)
-            .map_err(|e| JsModuleError::IoError(format!("Failed to read entry script: {}", e)))?;
+        let entry_content = fs::read(&temp_entry).context(IoSnafu {
+            message: "Failed to read entry script",
+        })?;
 
         let mut asset = Asset::new(
             temp_entry.to_string_lossy().to_string().into(),
@@ -603,9 +537,12 @@ impl JsModuleManager {
 
         // Use the JS bundle processor
         let processor = JsBundleProcessor { minify: false };
-        let result = processor
-            .process(&mut asset)
-            .map_err(|e| JsModuleError::InvalidModule(format!("Bundling failed: {:?}", e)));
+        let result = processor.process(&mut asset).map_err(|e| {
+            InvalidModuleSnafu {
+                message: format!("Bundling failed: {e:?}"),
+            }
+            .build()
+        });
 
         // Clean up the temporary entry script
         if let Err(e) = fs::remove_file(&temp_entry) {
@@ -616,11 +553,42 @@ impl JsModuleManager {
 
         // Get the bundled code
         let bundled_code = asset.as_text().map_err(|e| {
-            JsModuleError::InvalidModule(format!("Failed to get bundled code: {:?}", e))
+            InvalidModuleSnafu {
+                message: format!("Failed to get bundled code: {e:?}"),
+            }
+            .build()
         })?;
 
         Ok(bundled_code.to_string())
     }
+}
+
+/// Error types for JavaScript module operations.
+#[derive(Debug, Snafu)]
+pub enum JsModuleError {
+    #[snafu(display("HTTP request failed for {url}"))]
+    Http { url: String, source: ureq::Error },
+
+    #[snafu(display("Failed to read response body"))]
+    ReadBody { source: ureq::Error },
+
+    #[snafu(display("Failed to parse JSON for {module}"))]
+    Json {
+        module: String,
+        source: serde_json::Error,
+    },
+
+    #[snafu(display("{message}"))]
+    Io {
+        message: String,
+        source: std::io::Error,
+    },
+
+    #[snafu(display("Module not found: {module}"))]
+    ModuleNotFound { module: String },
+
+    #[snafu(display("Invalid module: {message}"))]
+    InvalidModule { message: String },
 }
 
 #[cfg(test)]
