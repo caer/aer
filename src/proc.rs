@@ -1,3 +1,6 @@
+//! Processors for in-memory assets, like
+//! Markdown to HTML compilers or SCSS to CSS compilers.
+
 use codas::types::Text;
 
 mod asset;

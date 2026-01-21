@@ -38,6 +38,16 @@ ratatui = "0.29.0"
 # Logging.
 tracing = "0.1.41"
 tracing-subscriber = "0.3.20"
+# HTTP client
+ureq = { version = "3.1.4", features = ["json"] }
+# JSON parsing
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Error handling
+snafu = "0.8.9"
+# Tarball extraction
+tar = "0.4"
+flate2 = "1.0"
 
 [dev-dependencies]
 test-log = { version = "0.2.18", default-features = false, features = ["trace", "unstable"] }
