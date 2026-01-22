@@ -119,7 +119,7 @@ canonicalize = { root = "https://www.example.com/" }
 
 For every asset in `paths.source`, the command executes each processor
 in the profile's `procs` with a media type matching the asset. Processed assets
-are written to `paths.target` with the same relative path they have in `source/`.
+are written to `paths.target` with the same relative path they have in `paths.source`.
 
 Processors execute in the order they appear in the TOML file. Processor-to-asset matching is determined by hardcoded media type support.
 
