@@ -2,95 +2,173 @@
 
 `aer` is a CLI that enables the entire creative process, with an initial focus on web development.
 
-## Asset Processors
+## Asset Processing
 
-### `canonicalize`
+### `canonicalize` Processor
 
-This processor parses any CSS, JS, or HTML asset for relative or absolute
-URL paths that are _not_ fully-qualified against a domain or hostname,
-converting them to fully-qualified ("canonicalized") paths based on 
-`canonicalize.root`.
+Parses CSS, JS, and HTML assets for relative or absolute URL paths without
+a domain, converting them to fully-qualified paths based on a `root` parameter.
 
-### `image`
+Already-qualified URLs are unchanged. URLs in JavaScript string literals are skipped.
 
-This processor resizes any image asset to fit within a `max_height` and
-`max_width`, in pixels, while maintaining the original aspect ratio.
+### `frontmatter` Processor
 
-### `markdown`
+Extracts TOML frontmatter (delimited by `***`) into the processing context
+for use by other processors.
 
-This processor compiles a Markdown asset to HTML.
+Example of an HTML asset containing frontmatter:
 
-### `minify_html`
+```html
+title = "Example Page"
 
-This processor minifies and strips comments from an HTML asset.
+***
 
-### `minify_js`
+<h1>Hello, world!</h1>
+```
 
-This processor minifies and strips comments from a JS asset.
+Emits the asset with frontmatter stripped.
 
-### `scss`
+### `image` Processor
 
-This processor compiles a SCSS asset to CSS.
+Resizes JPG, PNG, or GIF assets to fit within `max_height` and `max_width`
+parameters (in pixels) while maintaining aspect ratio. Resizes if either
+dimension exceeds its limit.
 
-### `template`
+### `markdown` Processor
 
-This processor compiles a template inside a text asset.
+Compiles Markdown assets to HTML body fragments (no boilerplate), following
+the CommonMark specification.
 
-## Creative Tools
+### `minify_html` Processor
 
-### `color`
+Minifies and strips comments from HTML assets.
 
-## CLI: `aer proc`
+### `minify_js` Processor
 
-This command accepts a:
+Minifies and strips comments from JS assets.
 
-- `processor`, which is the name of an asset processor to execute.
-- `input`, which is a file, directory, or glob pattern (like `**/*.scss`).
-- `target_path`, which is a directory.
+### `scss` Processor
 
-On execution, `processor` will be executed against all files matching `input`,
-emitting the results to `target_path`.
+Compiles SCSS assets to CSS.
 
-## CLI: `aer procs`
+### `template` Processor
 
-This command accepts a `procs_file`, which is the path to a TOML file
-containing a structure like:
+Compiles templates in text assets, drawing values from the processing context.
+
+Template expressions are wrapped in `~{ }`. The following expressions are supported:
+
+- `~{# variable_name}` outputs the value of a variable
+- `~{if condition}...~{end}` renders content if the condition is truthy (non-empty and not `"false"` or `"0"`)
+- `~{for item in items}...~{end}` iterates over a list
+
+Example template:
+
+```html
+<title>~{# title}</title>
+~{if show_greeting}
+    <p>Hello, ~{# name}!</p>
+~{end}
+<ul>
+~{for item in items}
+    <li>~{# item}</li>
+~{end}
+</ul>
+```
+
+### `aer proc` Command
+
+Accepts a `processor` name, an `input` (file, directory, or glob pattern like
+`**/*.scss`), and a `target_path` directory. The processor runs against all
+matching assets, writing results to `target_path`. Directory structure from
+glob patterns is preserved in the target.
+
+Processor options are passed as long CLI arguments:
+
+```sh
+aer proc canonicalize **/*.html public/ --root https://www.example.com/
+aer proc image **/*.png public/ --max-width 800 --max-height 600
+```
+
+### `aer procs` Command
+
+Accepts a `procs_file`, which is the path to a TOML file containing a
+structure like:
 
 ```toml
-[paths]
-source = "site/"
-target = "public/"
+# The "context" processor sets values on the
+# global context shared by all processors.
+[default.context]
+paths = { source = "site/", target = "public/" }
+title = "Aer Site"
 
 # Asset processors to run in all environments
-[procs.default]
-template = { title = "Aer Site" }
-canonicalize = { root = "http://localhost:1337/" }
-image = { max_width = 1920, max_height = 1920 }
-scss = {}
+[default.procs]
+frontmatter = {}
 markdown = {}
+template = {}
+canonicalize = { root = "http://localhost:1337/" }
+scss = {}
 minify_html = {}
 minify_js = {}
+image = { max_width = 1920, max_height = 1920 }
 
 # Asset processors to run in production.
-[procs.production]
+[production.procs]
 canonicalize = { root = "https://www.example.com/" }
 ```
 
-For _every_ file in `procs_file.target`, the command will execute _each_
-processor in `procs_file.procs` with a media type matching the file. The
-resulting processed asset(s) will be written to `target/` with the same
-relative path they have in `source/`.
+For every asset in `paths.source`, the command executes each processor
+in the profile's `procs` with a media type matching the asset. Processed assets
+are written to `paths.target` with the same relative path they have in `source/`.
+
+Processors execute in the order they appear in the TOML file. Processor-to-asset matching is determined by hardcoded media type support.
 
 If the media type of an asset changes as a result of a given processor
-executing against it, all other `procs_file.procs` will be re-evaluated:
-For example, if a `.md` asset is compiled by the `markdown` processor, the
-`minify_html` proc would be run against the resulting compiled `.html`.
+executing against it, all other processors will be re-evaluated. For example,
+if a `.md` asset is compiled by the `markdown` processor, the `minify_html`
+processor would be run against the resulting compiled `.html`.
 
-## CLI: `aer serve`
+Profiles are specified via `-p` or `--profile`. Custom profiles (like
+`[production]`) merge on top of `[default]`. Paths can vary per profile to
+support diverse deployment environments.
 
-This command starts a local HTTP server that watches an asset path for changes,
-running the same logic as `aer procs` whenever any asset changes.
+When a processor fails, other processors may still run against the last
+successfully processed contents of the asset.
 
-This command will attempt to load an `Aer.toml` from the current directory
-to use as a `procs_file`. A default TOML with all processors enabled will
-be created if one does not already exist.
+### `aer serve` Command
+
+Starts a local HTTP server on port `1337` that watches an asset
+path for changes, running the same logic as `aer procs` whenever any asset
+changes.
+
+Attempts to load an `Aer.toml` from the current directory to use as a `procs_file`.
+A default TOML with all processors enabled will be created if one does not already exist.
+
+Profiles are specified the same way as `aer procs` (`-p` or `--profile`).
+
+## Color Palettes
+
+### `aer palette` Command
+
+Generates color palettes using the Oklch color space.
+
+A `Color` is represented by:
+
+- `l` (lightness): `0.0` (darkest) to `1.0` (brightest)
+- `c` (chroma): `0.0` (desaturated) to `0.4` (saturated)
+- `h` (hue): `0.0` to `360.0` degrees
+
+A `Neutrals` palette derives seven shades from a base color:
+
+| Shade     | Lightness |
+|-----------|-----------|
+| darkest   | 0.19      |
+| darker    | 0.24      |
+| dark      | 0.41      |
+| neutral   | 0.58      |
+| light     | 0.75      |
+| lighter   | 0.92      |
+| lightest  | 0.97      |
+
+A `ColorSystem` provides 9 base colors (neutral, magenta, red, orange, yellow,
+green, cyan, blue, purple) all at lightness `0.58`, with additional derived shades.
