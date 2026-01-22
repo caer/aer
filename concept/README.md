@@ -6,10 +6,28 @@
 
 ### `canonicalize` Processor
 
-Parses CSS, JS, and HTML assets for relative or absolute URL paths without
-a domain, converting them to fully-qualified paths based on a `root` parameter.
+Transforms URL paths in HTML and CSS assets to fully-qualified URLs based on
+a `root` parameter.
 
-Already-qualified URLs are unchanged. URLs in JavaScript string literals are skipped.
+Transformed URLs:
+
+- Absolute paths: `/path/to/file` → `{root}/path/to/file`
+- Relative paths: `./file` or `../file` → `{root}/file`
+- Bare paths: `file.css` → `{root}/file.css`
+
+Unchanged URLs:
+
+- Already-qualified: `https://...`, `http://...`
+- Protocol-relative: `//cdn.example.com/...`
+- Special: `data:`, `javascript:`, `mailto:`, `#anchor`
+
+Parses HTML and processes URL-containing attributes: `href`, `src`, `action`,
+`poster`, `data`, `cite`, `formaction`. Also processes `url()` values in
+inline `style` attributes. Inline JavaScript content (inside `<script>` tags
+and event handlers) is not processed, but `src` attributes on `<script>`
+elements are.
+
+Processes `url()` values in CSS stylesheets (both quoted and unquoted).
 
 ### `frontmatter` Processor
 
@@ -33,6 +51,12 @@ Emits the asset with frontmatter stripped.
 Resizes JPG, PNG, or GIF assets to fit within `max_height` and `max_width`
 parameters (in pixels) while maintaining aspect ratio. Resizes if either
 dimension exceeds its limit.
+
+### `js_bundle` Processor
+
+Bundles JavaScript modules into a single file using Rolldown. Resolves
+`import` statements and consolidates dependencies. Optionally minifies
+output via the `minify` parameter.
 
 ### `markdown` Processor
 
@@ -108,6 +132,7 @@ markdown = {}
 template = {}
 canonicalize = { root = "http://localhost:1337/" }
 scss = {}
+js_bundle = { minify = false }
 minify_html = {}
 minify_js = {}
 image = { max_width = 1920, max_height = 1920 }
@@ -115,6 +140,7 @@ image = { max_width = 1920, max_height = 1920 }
 # Asset processors to run in production.
 [production.procs]
 canonicalize = { root = "https://www.example.com/" }
+js_bundle = { minify = true }
 ```
 
 For every asset in `paths.source`, the command executes each processor

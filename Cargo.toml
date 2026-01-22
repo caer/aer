@@ -18,6 +18,8 @@ codas = "0.5.1"
 codas-macros = "0.5.1"
 # SASS-y compiler
 grass = "0.13.4"
+# HTML parsing and rewriting.
+lol_html = "2.7.1"
 # Image processing.
 image = { version = "0.25.8", default-features = false, features = ["rayon", "jpeg", "png", "gif", "ico", "webp"] }
 # Template processing.
