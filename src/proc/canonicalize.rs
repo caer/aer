@@ -63,10 +63,10 @@ impl CanonicalizeProcessor {
         }
 
         // Resolve absolute paths (starting with /) directly against root.
-        if url.starts_with('/') {
+        if let Some(stripped) = url.strip_prefix('/') {
             return self
                 .root
-                .join(&url[1..])
+                .join(stripped)
                 .map(|u| u.to_string())
                 .unwrap_or_else(|_| url.to_string());
         }
@@ -143,11 +143,11 @@ impl CanonicalizeProcessor {
                 result.push_str(&self.canonicalize_url(&url, asset_path));
 
                 // Write closing quote if present.
-                if quote_char.is_some() {
-                    if let Some(&(_, c)) = chars.peek() {
-                        result.push(c);
-                        chars.next();
-                    }
+                if quote_char.is_some()
+                    && let Some(&(_, c)) = chars.peek()
+                {
+                    result.push(c);
+                    chars.next();
                 }
             } else {
                 result.push(c);
