@@ -3,6 +3,7 @@ use codas::types::Text;
 mod asset;
 pub use asset::{Asset, MediaCategory, MediaType};
 pub mod canonicalize;
+pub mod frontmatter;
 pub mod image;
 pub mod js_bundle;
 pub mod markdown;

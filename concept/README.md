@@ -33,8 +33,11 @@ URLs _within_ `<script>` tags are not processed. Fully-qualified URLs
 
 ### `frontmatter` Processor
 
-Extracts TOML frontmatter (delimited by `***`) into the processing context
-for use by other processors.
+Extracts TOML frontmatter from _any_ text asset into the
+processing context for use by other processors.
+
+Text contains valid TOML frontmatter if it _begins_ with
+valid TOML content which is followed by `***` on a newline.
 
 Example of an HTML asset containing frontmatter:
 
@@ -46,7 +49,8 @@ title = "Example Page"
 <h1>Hello, world!</h1>
 ```
 
-Emits the asset with frontmatter stripped.
+The processed asset is re-emitted by the processor with
+the frontmatter removed.
 
 ### `image` Processor
 
