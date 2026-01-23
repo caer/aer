@@ -8,7 +8,11 @@ use crate::proc::ProcessingError;
 /// An in-memory representation of any asset meant for processing.
 #[derive(Clone, Debug)]
 pub struct Asset {
-    /// The asset's logical path, including the asset's name.
+    /// The asset's logical path, including the asset's name
+    /// and _original_ file extension (if any).
+    ///
+    /// This path is assumed to be relative to a common root
+    /// directory for all assets being processed.
     path: Text,
     content: Option<AssetContent>,
     content_media_type: MediaType,

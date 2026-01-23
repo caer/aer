@@ -6,28 +6,30 @@
 
 ### `canonicalize` Processor
 
-Transforms URL paths in HTML and CSS assets to fully-qualified URLs based on
-a `root` parameter.
+Transforms URL paths in HTML assets to fully-qualified
+URLs based on a `root` parameter.
 
-Transformed URLs:
+Absolute paths are canonicalized relative to `root`:
+`/path/to/file` becomes `{root}/path/to/file`.
 
-- Absolute paths: `/path/to/file` → `{root}/path/to/file`
-- Relative paths: `./file` or `../file` → `{root}/file`
-- Bare paths: `file.css` → `{root}/file.css`
+Relative paths (e.g., `./file`, `../file`, or `file`)
+are canonicalized relative to `root` _and_ their source
+asset's declared path.
 
-Unchanged URLs:
+For example, given an asset `/path/to/file.html` containing
+a URL `../styles.css`, the final canonicalized URL would be
+`{root}/path/styles.css`.
 
-- Already-qualified: `https://...`, `http://...`
-- Protocol-relative: `//cdn.example.com/...`
-- Special: `data:`, `javascript:`, `mailto:`, `#anchor`
+The following URLs within HTML assets are processed:
 
-Parses HTML and processes URL-containing attributes: `href`, `src`, `action`,
-`poster`, `data`, `cite`, `formaction`. Also processes `url()` values in
-inline `style` attributes. Inline JavaScript content (inside `<script>` tags
-and event handlers) is not processed, but `src` attributes on `<script>`
-elements are.
+- URL-containing attributes like `href`, `src`, `action`, 
+  `poster`, `data`, `cite`, `formaction`. 
+  
+- `url()` values in inline `style` attributes. 
 
-Processes `url()` values in CSS stylesheets (both quoted and unquoted).
+URLs _within_ `<script>` tags are not processed. Fully-qualified URLs
+(like `https://localhost`) and special URLs (`data:`, `javascript:`,
+`mailto:`, `#anchor`) are not processed.
 
 ### `frontmatter` Processor
 
