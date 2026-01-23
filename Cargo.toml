@@ -13,6 +13,8 @@ authors = [
 [dependencies]
 # Clipboard
 arboard = "3.6.0"
+# CLI argument parsing
+clap = { version = "4", features = ["derive"] }
 # Data types
 codas = "0.5.1"
 codas-macros = "0.5.1"
