@@ -2,7 +2,7 @@ use codas::types::Text;
 use lol_html::{RewriteStrSettings, element, rewrite_str};
 use url::Url;
 
-use super::{Asset, MediaType, ProcessesAssets, ProcessingError};
+use super::{Asset, Context, MediaType, ProcessesAssets, ProcessingError};
 
 /// Canonicalizes relative and absolute URL paths in HTML assets
 /// by converting them to fully-qualified URLs based on a root parameter.
@@ -213,7 +213,7 @@ impl CanonicalizeProcessor {
 }
 
 impl ProcessesAssets for CanonicalizeProcessor {
-    fn process(&self, asset: &mut Asset) -> Result<(), ProcessingError> {
+    fn process(&self, _context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
         if asset.media_type() != &MediaType::Html {
             tracing::debug!(
                 "skipping asset {}: not HTML: {}",
@@ -367,7 +367,7 @@ mod tests {
     fn skips_non_html_assets() {
         let p = processor();
         let mut asset = Asset::new("script.js".into(), b"const x = '/api'".to_vec());
-        p.process(&mut asset).unwrap();
+        p.process(&mut Context::default(), &mut asset).unwrap();
         assert_eq!(asset.as_text().unwrap(), "const x = '/api'");
     }
 
@@ -378,7 +378,7 @@ mod tests {
             "/blog/posts/article.html".into(),
             b"<a href=\"../index.html\">Back</a>".to_vec(),
         );
-        p.process(&mut asset).unwrap();
+        p.process(&mut Context::default(), &mut asset).unwrap();
         assert!(
             asset
                 .as_text()

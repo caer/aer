@@ -1,6 +1,6 @@
 use minify_js::{Session, TopLevelMode, minify};
 
-use super::{Asset, MediaType, ProcessesAssets, ProcessingError};
+use super::{Asset, Context, MediaType, ProcessesAssets, ProcessingError};
 
 /// Minifies JavaScript assets by removing unnecessary whitespace and comments.
 ///
@@ -8,7 +8,7 @@ use super::{Asset, MediaType, ProcessesAssets, ProcessingError};
 pub struct MinifyJsProcessor;
 
 impl ProcessesAssets for MinifyJsProcessor {
-    fn process(&self, asset: &mut Asset) -> Result<(), ProcessingError> {
+    fn process(&self, _context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
         if asset.media_type() != &MediaType::JavaScript {
             tracing::debug!(
                 "skipping asset {}: not JavaScript: {}",
@@ -55,7 +55,9 @@ mod tests {
             }
         "#;
         let mut asset = Asset::new("script.js".into(), js.as_bytes().to_vec());
-        MinifyJsProcessor.process(&mut asset).unwrap();
+        MinifyJsProcessor
+            .process(&mut Context::default(), &mut asset)
+            .unwrap();
 
         let result = asset.as_text().unwrap();
         // Comments should be stripped.
@@ -71,7 +73,9 @@ mod tests {
     #[test]
     fn skips_non_js() {
         let mut asset = Asset::new("index.html".into(), b"<html></html>".to_vec());
-        MinifyJsProcessor.process(&mut asset).unwrap();
+        MinifyJsProcessor
+            .process(&mut Context::default(), &mut asset)
+            .unwrap();
         assert_eq!(asset.as_text().unwrap(), "<html></html>");
     }
 
@@ -79,7 +83,9 @@ mod tests {
     fn skips_already_minified() {
         let js = "function test(){console.log('already minified')}";
         let mut asset = Asset::new("vendor.min.js".into(), js.as_bytes().to_vec());
-        MinifyJsProcessor.process(&mut asset).unwrap();
+        MinifyJsProcessor
+            .process(&mut Context::default(), &mut asset)
+            .unwrap();
         // Content should be unchanged.
         assert_eq!(asset.as_text().unwrap(), js);
     }

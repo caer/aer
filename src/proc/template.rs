@@ -1,9 +1,6 @@
-use std::collections::BTreeMap;
-
-use codas::types::Text;
 use logos::{Lexer, Logos, Span};
 
-use crate::proc::{Asset, MediaCategory, ProcessesAssets, ProcessingError};
+use crate::proc::{Asset, Context, ContextValue, MediaCategory, ProcessesAssets, ProcessingError};
 
 mod tokenizer;
 
@@ -38,13 +35,10 @@ use tokenizer::{TemplateExpression, Token};
 ///    <li>Roy</li>
 /// </ul>
 /// ```
-pub struct TemplateProcessor {
-    /// Context containing variables that can be used by templates.
-    context: BTreeMap<Text, TemplateValue>,
-}
+pub struct TemplateProcessor;
 
 impl ProcessesAssets for TemplateProcessor {
-    fn process(&self, asset: &mut Asset) -> Result<(), ProcessingError> {
+    fn process(&self, context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
         if asset.media_type().category() != MediaCategory::Text {
             tracing::debug!(
                 "skipping asset {}: not text {}",
@@ -57,7 +51,7 @@ impl ProcessesAssets for TemplateProcessor {
         let template = asset.as_text()?;
         let mut lexer = Token::lexer(template.as_str());
         let mut output = String::with_capacity(template.len());
-        self.compile_template(&mut lexer, &mut output)?;
+        Self::compile_template(context, &mut lexer, &mut output)?;
         asset.replace_with_text(output.into(), asset.media_type().clone());
 
         Ok(())
@@ -68,7 +62,7 @@ impl TemplateProcessor {
     /// Compiles a text template containing zero or more [TemplateExpression]s,
     /// appending the compiled results to `output`.
     fn compile_template(
-        &self,
+        context: &Context,
         lexer: &mut Lexer<Token>,
         output: &mut String,
     ) -> Result<(), ProcessingError> {
@@ -89,9 +83,9 @@ impl TemplateProcessor {
                                 })?
                                 .try_as_identifier()?;
 
-                            let value = match self.context.get(&identifier) {
-                                Some(TemplateValue::Text(text)) => text.clone(),
-                                Some(TemplateValue::List(items)) => {
+                            let value = match context.get(&identifier) {
+                                Some(ContextValue::Text(text)) => text.clone(),
+                                Some(ContextValue::List(items)) => {
                                     let mut items_string = String::from("[");
                                     for item in items {
                                         items_string.push_str(item.as_str());
@@ -119,11 +113,11 @@ impl TemplateProcessor {
                                 .try_as_identifier()?;
 
                             // A variable reference is "truthy" if it exists and is not "false" or "0".
-                            let truthy = match self.context.get(&identifier) {
-                                Some(TemplateValue::Text(text)) => {
+                            let truthy = match context.get(&identifier) {
+                                Some(ContextValue::Text(text)) => {
                                     text != "false" && text != "0" && !text.is_empty()
                                 }
-                                Some(TemplateValue::List(list)) => !list.is_empty(),
+                                Some(ContextValue::List(list)) => !list.is_empty(),
                                 None => false,
                             };
 
@@ -132,7 +126,7 @@ impl TemplateProcessor {
                             if truthy {
                                 let block_text = &lexer.source()[block_span];
                                 let mut block_lexer = Token::lexer(block_text);
-                                self.compile_template(&mut block_lexer, output)?;
+                                Self::compile_template(context, &mut block_lexer, output)?;
                             }
                         }
 
@@ -150,26 +144,27 @@ impl TemplateProcessor {
                                     message: "missing collection identifier in for loop".into(),
                                 })?
                                 .try_as_identifier()?;
-                            let collection = self.context.get(&collection_identifier);
+                            let collection = context.get(&collection_identifier);
 
                             let block_span = Self::traverse_template_block(lexer)?;
-                            if let Some(TemplateValue::List(items)) = collection
+                            if let Some(ContextValue::List(items)) = collection
                                 && !items.is_empty()
                             {
                                 let block_text = &lexer.source()[block_span];
 
                                 for item in items {
-                                    let mut loop_context = self.context.clone();
+                                    let mut loop_context = context.clone();
                                     loop_context.insert(
                                         item_identifier.clone(),
-                                        TemplateValue::Text(item.clone()),
+                                        ContextValue::Text(item.clone()),
                                     );
 
-                                    let loop_processor = TemplateProcessor {
-                                        context: loop_context,
-                                    };
                                     let mut block_lexer = Token::lexer(block_text);
-                                    loop_processor.compile_template(&mut block_lexer, output)?;
+                                    Self::compile_template(
+                                        &loop_context,
+                                        &mut block_lexer,
+                                        output,
+                                    )?;
                                 }
                             }
                         }
@@ -268,16 +263,8 @@ impl TemplateProcessor {
     }
 }
 
-/// Value types used in [TemplateProcessor] contexts.
-#[derive(Debug, Clone)]
-pub enum TemplateValue {
-    Text(Text),
-    List(Vec<Text>),
-}
-
 #[cfg(test)]
 mod tests {
-
     use crate::proc::{Asset, MediaType};
 
     use super::*;
@@ -290,11 +277,8 @@ mod tests {
         );
         asset.set_media_type(MediaType::Html);
 
-        TemplateProcessor {
-            context: [("is_empty".into(), TemplateValue::Text("true".into()))].into(),
-        }
-        .process(&mut asset)
-        .unwrap();
+        let mut ctx: Context = [("is_empty".into(), ContextValue::Text("true".into()))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
 
         assert_eq!(r#"This is empty!"#, asset.as_text().unwrap());
     }
@@ -307,15 +291,12 @@ mod tests {
         );
         asset.set_media_type(MediaType::Html);
 
-        TemplateProcessor {
-            context: [(
-                "items".into(),
-                TemplateValue::List(vec!["apple".into(), "banana".into(), "cherry".into()]),
-            )]
-            .into(),
-        }
-        .process(&mut asset)
-        .unwrap();
+        let mut ctx: Context = [(
+            "items".into(),
+            ContextValue::List(vec!["apple".into(), "banana".into(), "cherry".into()]),
+        )]
+        .into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
 
         assert_eq!(
             r#"Items: [apple, banana, cherry, ]"#,

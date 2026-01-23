@@ -1,6 +1,6 @@
 use markdown::{mdast::Node, message::Message};
 
-use super::{Asset, MediaType, ProcessesAssets, ProcessingError};
+use super::{Asset, Context, MediaType, ProcessesAssets, ProcessingError};
 
 impl From<Message> for ProcessingError {
     fn from(error: Message) -> Self {
@@ -12,7 +12,7 @@ impl From<Message> for ProcessingError {
 pub struct MarkdownProcessor {}
 
 impl ProcessesAssets for MarkdownProcessor {
-    fn process(&self, asset: &mut Asset) -> Result<(), ProcessingError> {
+    fn process(&self, _context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
         if *asset.media_type() != MediaType::Markdown {
             tracing::debug!(
                 "skipping asset {}: not markdown {}",
@@ -268,7 +268,7 @@ mod tests {
                 .to_vec(),
         );
 
-        let _ = MarkdownProcessor {}.process(&mut markdown_asset);
+        let _ = MarkdownProcessor {}.process(&mut Context::default(), &mut markdown_asset);
 
         assert_eq!(
             "<h1 id=\"header-1\">Header 1</h1><p>Body</p><Blockquote><p>Quotation in <strong>bold</strong> and <em>italics</em>.</p></Blockquote>",

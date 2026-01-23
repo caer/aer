@@ -3,7 +3,7 @@ use std::path::Path;
 use brk_rolldown::{Bundler, BundlerOptions};
 use brk_rolldown_common::Output;
 
-use super::{Asset, MediaType, ProcessesAssets, ProcessingError};
+use super::{Asset, Context, MediaType, ProcessesAssets, ProcessingError};
 
 /// Bundles JavaScript entry points and their dependencies into a single file.
 ///
@@ -101,7 +101,7 @@ impl JsBundleProcessor {
 }
 
 impl ProcessesAssets for JsBundleProcessor {
-    fn process(&self, asset: &mut Asset) -> Result<(), ProcessingError> {
+    fn process(&self, _context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
         // Skip assets that aren't JavaScript.
         if *asset.media_type() != MediaType::JavaScript {
             tracing::debug!(
@@ -140,7 +140,7 @@ mod tests {
         let mut css_asset = Asset::new("style.css".into(), "body {}".as_bytes().to_vec());
 
         // Processing should succeed (skip) without errors.
-        let result = processor.process(&mut css_asset);
+        let result = processor.process(&mut Context::default(), &mut css_asset);
         assert!(result.is_ok());
     }
 
@@ -152,7 +152,7 @@ mod tests {
         let mut js_asset = Asset::new("test/js_bundle/entry.js".into(), "".as_bytes().to_vec());
 
         // Process the asset.
-        let result = processor.process(&mut js_asset);
+        let result = processor.process(&mut Context::default(), &mut js_asset);
         assert!(result.is_ok());
 
         // Check that the bundled code contains content from the entry point

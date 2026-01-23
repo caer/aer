@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use codas::types::Text;
 
 mod asset;
@@ -14,8 +16,18 @@ pub mod template;
 
 /// A thing that processes [Asset]s.
 pub trait ProcessesAssets {
-    /// Processes `asset`.
-    fn process(&self, asset: &mut Asset) -> Result<(), ProcessingError>;
+    /// Processes `asset` with access to a shared `context`.
+    fn process(&self, context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError>;
+}
+
+/// A shared processing context passed between processors.
+pub type Context = BTreeMap<Text, ContextValue>;
+
+/// Value types used in processing [Context].
+#[derive(Debug, Clone)]
+pub enum ContextValue {
+    Text(Text),
+    List(Vec<Text>),
 }
 
 /// An error that occurs while procesing assets.

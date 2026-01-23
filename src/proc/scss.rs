@@ -2,7 +2,7 @@ use std::path::Path;
 
 use grass::{Options, from_path};
 
-use super::{Asset, MediaType, ProcessesAssets, ProcessingError};
+use super::{Asset, Context, MediaType, ProcessesAssets, ProcessingError};
 
 impl From<Box<grass::Error>> for ProcessingError {
     fn from(error: Box<grass::Error>) -> Self {
@@ -14,7 +14,7 @@ impl From<Box<grass::Error>> for ProcessingError {
 pub struct ScssProcessor {}
 
 impl ProcessesAssets for ScssProcessor {
-    fn process(&self, asset: &mut Asset) -> Result<(), ProcessingError> {
+    fn process(&self, _context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
         if *asset.media_type() != MediaType::Scss {
             tracing::debug!(
                 "skipping asset {}: not SCSS {}",
@@ -47,7 +47,7 @@ mod tests {
         let mut simple_scss_asset =
             Asset::new("test/simple_example.scss".into(), "".as_bytes().to_vec());
 
-        let _ = ScssProcessor {}.process(&mut simple_scss_asset);
+        let _ = ScssProcessor {}.process(&mut Context::default(), &mut simple_scss_asset);
 
         assert_eq!(
             "body {\n  font: 100% Helvetica, sans-serif;\n  color: #333;\n}\n",
@@ -59,7 +59,7 @@ mod tests {
             "".as_bytes().to_vec(),
         );
 
-        let _ = ScssProcessor {}.process(&mut simple_nested_scss_asset);
+        let _ = ScssProcessor {}.process(&mut Context::default(), &mut simple_nested_scss_asset);
 
         assert_eq!(
             "nav ul {\n  margin: 0;\n  padding: 0;\n  list-style: none;\n}\nnav li {\n  display: inline-block;\n}\nnav a {\n  display: block;\n  padding: 6px 12px;\n  text-decoration: none;\n}\n",

@@ -1,11 +1,7 @@
-use std::cell::RefCell;
-use std::collections::BTreeMap;
-
 use codas::types::Text;
 use toml::Value;
 
-use super::template::TemplateValue;
-use super::{Asset, MediaCategory, ProcessesAssets, ProcessingError};
+use super::{Asset, Context, ContextValue, MediaCategory, ProcessesAssets, ProcessingError};
 
 const FRONTMATTER_DELIMITER: &str = "***";
 
@@ -13,8 +9,8 @@ const FRONTMATTER_DELIMITER: &str = "***";
 ///
 /// Text contains valid frontmatter if it begins with valid TOML content
 /// followed by `***` on its own line. The processor strips the frontmatter
-/// (including the delimiter) from the asset and makes the parsed values
-/// available via [`context()`](Self::context).
+/// (including the delimiter) from the asset and writes parsed values to
+/// the shared context.
 ///
 /// # Example
 ///
@@ -35,45 +31,31 @@ const FRONTMATTER_DELIMITER: &str = "***";
 ///
 /// <h1>Hello, world!</h1>
 /// ```
-pub struct FrontmatterProcessor {
-    context: RefCell<BTreeMap<Text, TemplateValue>>,
-}
+pub struct FrontmatterProcessor;
 
 impl FrontmatterProcessor {
-    /// Creates a new frontmatter processor.
-    pub fn new() -> Self {
-        Self {
-            context: RefCell::new(BTreeMap::new()),
-        }
-    }
-
-    /// Returns the context extracted from the most recently processed asset.
-    pub fn context(&self) -> BTreeMap<Text, TemplateValue> {
-        self.context.borrow().clone()
-    }
-
-    /// Parses TOML content into template-compatible values.
-    fn parse_toml(content: &str) -> Result<BTreeMap<Text, TemplateValue>, ProcessingError> {
+    /// Parses TOML content into context values.
+    fn parse_toml(content: &str) -> Result<Context, ProcessingError> {
         let table: toml::Table =
             toml::from_str(content).map_err(|e| ProcessingError::Malformed {
                 message: format!("invalid TOML frontmatter: {}", e).into(),
             })?;
 
-        let mut context = BTreeMap::new();
+        let mut context = Context::default();
         for (key, value) in table {
-            let template_value = Self::toml_to_template_value(&value)?;
-            context.insert(key.into(), template_value);
+            let ctx_value = Self::toml_to_context_value(&value)?;
+            context.insert(key.into(), ctx_value);
         }
         Ok(context)
     }
 
-    /// Converts a TOML value to a template value.
-    fn toml_to_template_value(value: &Value) -> Result<TemplateValue, ProcessingError> {
+    /// Converts a TOML value to a context value.
+    fn toml_to_context_value(value: &Value) -> Result<ContextValue, ProcessingError> {
         match value {
-            Value::String(s) => Ok(TemplateValue::Text(s.clone().into())),
-            Value::Integer(n) => Ok(TemplateValue::Text(n.to_string().into())),
-            Value::Float(n) => Ok(TemplateValue::Text(n.to_string().into())),
-            Value::Boolean(b) => Ok(TemplateValue::Text(b.to_string().into())),
+            Value::String(s) => Ok(ContextValue::Text(s.clone().into())),
+            Value::Integer(n) => Ok(ContextValue::Text(n.to_string().into())),
+            Value::Float(n) => Ok(ContextValue::Text(n.to_string().into())),
+            Value::Boolean(b) => Ok(ContextValue::Text(b.to_string().into())),
             Value::Array(arr) => {
                 let items: Result<Vec<Text>, _> = arr
                     .iter()
@@ -87,24 +69,18 @@ impl FrontmatterProcessor {
                         }),
                     })
                     .collect();
-                Ok(TemplateValue::List(items?))
+                Ok(ContextValue::List(items?))
             }
             Value::Table(_) => Err(ProcessingError::Malformed {
                 message: "nested tables in frontmatter are not supported".into(),
             }),
-            Value::Datetime(dt) => Ok(TemplateValue::Text(dt.to_string().into())),
+            Value::Datetime(dt) => Ok(ContextValue::Text(dt.to_string().into())),
         }
     }
 }
 
-impl Default for FrontmatterProcessor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl ProcessesAssets for FrontmatterProcessor {
-    fn process(&self, asset: &mut Asset) -> Result<(), ProcessingError> {
+    fn process(&self, context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
         if asset.media_type().category() != MediaCategory::Text {
             tracing::debug!(
                 "skipping asset {}: not text: {}",
@@ -128,7 +104,6 @@ impl ProcessesAssets for FrontmatterProcessor {
         // No frontmatter found - nothing to do.
         let Some(pos) = split_pos else {
             tracing::debug!("no frontmatter found in asset {}", asset.path());
-            self.context.borrow_mut().clear();
             return Ok(());
         };
 
@@ -143,20 +118,19 @@ impl ProcessesAssets for FrontmatterProcessor {
 
         // Try to parse the frontmatter as TOML.
         // If parsing fails, treat it as no frontmatter (*** might just be in regular content).
-        let context = match Self::parse_toml(frontmatter) {
+        let parsed = match Self::parse_toml(frontmatter) {
             Ok(ctx) => ctx,
             Err(_) => {
                 tracing::debug!(
                     "content before *** in {} is not valid TOML, skipping",
                     asset.path()
                 );
-                self.context.borrow_mut().clear();
                 return Ok(());
             }
         };
 
-        // Update the stored context.
-        *self.context.borrow_mut() = context;
+        // Merge parsed values into the shared context.
+        context.extend(parsed);
 
         // Replace asset content with body only.
         asset.replace_with_text(body.into(), asset.media_type().clone());
@@ -170,18 +144,18 @@ mod tests {
     use super::*;
     use crate::proc::Asset;
 
-    fn get_text(ctx: &BTreeMap<Text, TemplateValue>, key: &str) -> Option<String> {
+    fn get_text(ctx: &Context, key: &str) -> Option<String> {
         let key: Text = key.into();
         match ctx.get(&key) {
-            Some(TemplateValue::Text(t)) => Some(t.to_string()),
+            Some(ContextValue::Text(t)) => Some(t.to_string()),
             _ => None,
         }
     }
 
-    fn get_list(ctx: &BTreeMap<Text, TemplateValue>, key: &str) -> Option<Vec<String>> {
+    fn get_list(ctx: &Context, key: &str) -> Option<Vec<String>> {
         let key: Text = key.into();
         match ctx.get(&key) {
-            Some(TemplateValue::List(items)) => Some(items.iter().map(|t| t.to_string()).collect()),
+            Some(ContextValue::List(items)) => Some(items.iter().map(|t| t.to_string()).collect()),
             _ => None,
         }
     }
@@ -195,10 +169,9 @@ author = "Test"
 
 <h1>Content</h1>"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
-        let processor = FrontmatterProcessor::new();
-        processor.process(&mut asset).unwrap();
+        let mut ctx = Context::default();
+        FrontmatterProcessor.process(&mut ctx, &mut asset).unwrap();
 
-        let ctx = processor.context();
         assert_eq!(get_text(&ctx, "title"), Some("Hello".to_string()));
         assert_eq!(get_text(&ctx, "author"), Some("Test".to_string()));
 
@@ -216,10 +189,9 @@ author = "Test"
 
 Body"#;
         let mut asset = Asset::new("page.md".into(), content.as_bytes().to_vec());
-        let processor = FrontmatterProcessor::new();
-        processor.process(&mut asset).unwrap();
+        let mut ctx = Context::default();
+        FrontmatterProcessor.process(&mut ctx, &mut asset).unwrap();
 
-        let ctx = processor.context();
         let tags = get_list(&ctx, "tags").expect("expected list");
         assert_eq!(tags, vec!["rust", "web", "cli"]);
     }
@@ -228,10 +200,10 @@ Body"#;
     fn handles_no_frontmatter() {
         let content = "<h1>No frontmatter here</h1>";
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
-        let processor = FrontmatterProcessor::new();
-        processor.process(&mut asset).unwrap();
+        let mut ctx = Context::default();
+        FrontmatterProcessor.process(&mut ctx, &mut asset).unwrap();
 
-        assert!(processor.context().is_empty());
+        assert!(ctx.is_empty());
         assert_eq!(asset.as_text().unwrap(), content);
     }
 
@@ -246,10 +218,9 @@ enabled = true
 
 Body"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
-        let processor = FrontmatterProcessor::new();
-        processor.process(&mut asset).unwrap();
+        let mut ctx = Context::default();
+        FrontmatterProcessor.process(&mut ctx, &mut asset).unwrap();
 
-        let ctx = processor.context();
         assert_eq!(get_text(&ctx, "name"), Some("test".to_string()));
         assert_eq!(get_text(&ctx, "count"), Some("42".to_string()));
         assert_eq!(get_text(&ctx, "ratio"), Some("3.14".to_string()));
@@ -259,9 +230,9 @@ Body"#;
     #[test]
     fn skips_non_text_assets() {
         let mut asset = Asset::new("image.png".into(), vec![0x89, 0x50, 0x4E, 0x47]);
-        let processor = FrontmatterProcessor::new();
-        processor.process(&mut asset).unwrap();
-        assert!(processor.context().is_empty());
+        let mut ctx = Context::default();
+        FrontmatterProcessor.process(&mut ctx, &mut asset).unwrap();
+        assert!(ctx.is_empty());
     }
 
     #[test]
@@ -274,11 +245,11 @@ key = "value"
 
 Body"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
-        let processor = FrontmatterProcessor::new();
-        processor.process(&mut asset).unwrap();
+        let mut ctx = Context::default();
+        FrontmatterProcessor.process(&mut ctx, &mut asset).unwrap();
 
         // Should skip - content unchanged, context empty.
-        assert!(processor.context().is_empty());
+        assert!(ctx.is_empty());
         assert_eq!(asset.as_text().unwrap(), content);
     }
 
@@ -290,11 +261,11 @@ that happens to have
 ***
 a delimiter in it"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
-        let processor = FrontmatterProcessor::new();
-        processor.process(&mut asset).unwrap();
+        let mut ctx = Context::default();
+        FrontmatterProcessor.process(&mut ctx, &mut asset).unwrap();
 
         // Should skip - content unchanged, context empty.
-        assert!(processor.context().is_empty());
+        assert!(ctx.is_empty());
         assert_eq!(asset.as_text().unwrap(), content);
     }
 }
