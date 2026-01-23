@@ -6,6 +6,8 @@ pub mod canonicalize;
 pub mod image;
 pub mod js_bundle;
 pub mod markdown;
+pub mod minify_html;
+pub mod minify_js;
 pub mod scss;
 pub mod template;
 

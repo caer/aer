@@ -73,6 +73,8 @@ Minifies and strips comments from HTML assets.
 
 Minifies and strips comments from JS assets.
 
+Assets with paths ending in `.min.js` will not be minified.
+
 ### `scss` Processor
 
 Compiles SCSS assets to CSS.
