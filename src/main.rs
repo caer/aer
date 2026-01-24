@@ -29,15 +29,16 @@ enum Commands {
     },
 }
 
-fn main() -> std::io::Result<()> {
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Init => aer::tool::procs::init(),
+        Commands::Init => aer::tool::procs::init().await,
         Commands::Palette => aer::tool::palette::run(),
         Commands::Procs {
             procs_file,
             profile,
-        } => aer::tool::procs::run(procs_file.as_deref(), profile.as_deref()),
+        } => aer::tool::procs::run(procs_file.as_deref(), profile.as_deref()).await,
     }
 }

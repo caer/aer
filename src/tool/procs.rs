@@ -5,8 +5,9 @@
 //! in the source directory.
 
 use std::collections::BTreeMap;
-use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use tokio::fs;
 
 use serde::Deserialize;
 
@@ -52,15 +53,15 @@ js_bundle = { minify = true }
 "#;
 
 /// Creates a default Aer.toml in the current directory if one doesn't exist.
-pub fn init() -> std::io::Result<()> {
+pub async fn init() -> std::io::Result<()> {
     let config_path = Path::new(DEFAULT_CONFIG_FILE);
 
-    if config_path.exists() {
+    if fs::try_exists(config_path).await? {
         eprintln!("{} already exists", DEFAULT_CONFIG_FILE);
         return Ok(());
     }
 
-    fs::write(config_path, DEFAULT_CONFIG_TOML)?;
+    fs::write(config_path, DEFAULT_CONFIG_TOML).await?;
     eprintln!("Created {}", DEFAULT_CONFIG_FILE);
 
     Ok(())
@@ -69,12 +70,12 @@ pub fn init() -> std::io::Result<()> {
 /// Runs the procs command with the given configuration file and optional profile.
 ///
 /// If `procs_file` is `None`, looks for `Aer.toml` in the current directory.
-pub fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::Result<()> {
+pub async fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::Result<()> {
     let config_path = procs_file.unwrap_or(Path::new(DEFAULT_CONFIG_FILE));
     let profile_name = profile.unwrap_or(DEFAULT_CONFIG_PROFILE);
 
     // Try to read and parse the configuration file.
-    let config_toml = fs::read_to_string(config_path)?;
+    let config_toml = fs::read_to_string(config_path).await?;
     let config: Config = toml::from_str(&config_toml).map_err(|e| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -125,12 +126,12 @@ pub fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::Result<
     let source = Path::new(source_path);
     let target = Path::new(target_path);
     let mut assets = Vec::new();
-    collect_assets(source, source, &mut assets)?;
+    collect_assets(source, &mut assets).await?;
     eprintln!("Found {} assets", assets.len());
 
     // Create target directory if it doesn't exist.
-    if !target.exists() {
-        fs::create_dir_all(target)?;
+    if !fs::try_exists(target).await? {
+        fs::create_dir_all(target).await?;
     }
 
     // Build processing context from config.
@@ -149,7 +150,8 @@ pub fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::Result<
             &config.procs,
             &mut proc_context,
             target,
-        );
+        )
+        .await;
 
         match result {
             Ok(()) => success_count += 1,
@@ -168,28 +170,24 @@ pub fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::Result<
     Ok(())
 }
 
-/// Recursively collects all assets from `current` path
-/// relative to `root` path, storing them in `assets`.
-fn collect_assets(
-    root: &Path,
-    current: &Path,
-    assets: &mut Vec<(String, Vec<u8>)>,
-) -> std::io::Result<()> {
-    if !current.is_dir() {
-        return Ok(());
-    }
+/// Collects all assets from the source directory.
+async fn collect_assets(root: &Path, assets: &mut Vec<(String, Vec<u8>)>) -> std::io::Result<()> {
+    let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
 
-    for entry in fs::read_dir(current)? {
-        let entry = entry?;
-        let path = entry.path();
+    while let Some(current) = stack.pop() {
+        let mut entries = fs::read_dir(&current).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            let metadata = fs::metadata(&path).await?;
 
-        if path.is_dir() {
-            collect_assets(root, &path, assets)?;
-        } else if path.is_file() {
-            let relative = path.strip_prefix(root).map_err(std::io::Error::other)?;
-            let relative_str = relative.to_string_lossy().to_string();
-            let content = fs::read(&path)?;
-            assets.push((relative_str, content));
+            if metadata.is_dir() {
+                stack.push(path);
+            } else if metadata.is_file() {
+                let relative = path.strip_prefix(root).map_err(std::io::Error::other)?;
+                let relative_str = relative.to_string_lossy().to_string();
+                let content = fs::read(&path).await?;
+                assets.push((relative_str, content));
+            }
         }
     }
 
@@ -197,7 +195,7 @@ fn collect_assets(
 }
 
 /// Processes a single asset through all matching processors.
-fn process_asset(
+async fn process_asset(
     path: &str,
     content: Vec<u8>,
     procs: &BTreeMap<String, ProcessorConfig>,
@@ -250,9 +248,9 @@ fn process_asset(
 
     // Write the processed asset to target.
     if let Some(parent) = target_path.parent() {
-        fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent).await?;
     }
-    fs::write(&target_path, asset.as_bytes())?;
+    fs::write(&target_path, asset.as_bytes()).await?;
     eprintln!("  {} -> {}", path, processed_path);
 
     Ok(())

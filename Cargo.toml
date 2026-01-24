@@ -34,7 +34,7 @@ markdown = "1.0.0-alpha.21"
 brk_rolldown = "0.2.3"
 brk_rolldown_common = "0.2.3"
 # Async runtime (required by brk_rolldown)
-tokio = { version = "1.48.0", features = ["rt-multi-thread"] }
+tokio = { version = "1.48.0", features = ["rt-multi-thread", "macros", "fs"] }
 # HTML file minification
 minify-html-onepass = { version = "0.18.1", default-features = false }
 # JS file minification
