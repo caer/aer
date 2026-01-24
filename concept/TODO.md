@@ -1,41 +1,43 @@
 # Implementation Progress
 
-## Processors: All Complete (9/9)
+## Processors: All Complete (8/8)
 
 | Processor | Status | File |
 |-----------|--------|------|
 | canonicalize | ✓ | `src/proc/canonicalize.rs` |
-| frontmatter | ✓ | `src/proc/frontmatter.rs` |
 | image | ✓ | `src/proc/image.rs` |
 | js_bundle | ✓ | `src/proc/js_bundle.rs` |
 | markdown | ✓ | `src/proc/markdown.rs` |
 | minify_html | ✓ | `src/proc/minify_html.rs` |
 | minify_js | ✓ | `src/proc/minify_js.rs` |
 | scss | ✓ | `src/proc/scss.rs` |
-| template | ✓ | `src/proc/template.rs` |
+| template | ✓ | `src/proc/template.rs` (includes frontmatter extraction) |
 
-## Commands: 2/4 Implemented
+## Commands: 3/5 Implemented
 
 | Command | Status | Description |
 |---------|--------|-------------|
-| `aer proc` | ❌ | Single processor CLI with glob input |
-| `aer procs` | ✓ | TOML pipeline with profiles |
-| `aer serve` | ❌ | Dev server with file watching |
+| `aer init` | ✓ | Create default Aer.toml |
 | `aer palette` | ✓ | Interactive color palette TUI |
+| `aer procs` | ✓ | TOML pipeline with profiles |
+| `aer proc` | ❌ | Single processor CLI with glob input |
+| `aer serve` | ❌ | Dev server with file watching |
 
 ## Remaining Work
 
 ### CLI Layer
 - [x] Add `clap` for argument parsing
+- [x] Implement `aer init` subcommand
 - [x] Implement `aer palette` subcommand (TUI in `src/tool/palette.rs`)
-- [ ] Implement `aer proc <processor> <input> <target_path> [--options]`
 - [x] Implement `aer procs <procs_file> [-p profile]`
+- [ ] Implement `aer proc <processor> <input> <target_path> [--options]`
 - [ ] Implement `aer serve [-p profile]`
 
 ### File I/O Layer
 - [x] Read source assets from filesystem
 - [x] Write processed assets to target directory
-- [x] Preserve directory structure from glob patterns
+- [x] Preserve directory structure
+- [ ] Skip writes when content is unchanged (incremental builds)
 
 ### Glob Pattern Support
 - [ ] Match files like `**/*.scss`, `**/*.html`
@@ -50,6 +52,11 @@
 - [x] Load `[default]` as base configuration
 - [x] Merge custom profiles (e.g., `[production]`) over default
 - [x] Support `-p` / `--profile` flag
+
+### Parts System (Template Includes)
+- [ ] Cache assets with `_` prefix without writing to target
+- [ ] Implement `~{use "path"}` template expression to include parts
+- [ ] Extract frontmatter from parts when included
 
 ### File Watcher (for `aer serve`)
 - [ ] Watch `paths.source` for changes
@@ -89,3 +96,35 @@ src/tool/color.rs    - Color types used by palette (now private to tool)
 - ratatui's `Color` conflicts with our `Color` type; aliased as `TermColor`
 - Internal module imports use `crate::` instead of the crate name
 - clap derive with `#[command(subcommand)]` makes routing clean
+
+### 2026-01-23: Implementation Review
+
+Updated TODO to reflect actual implementation state:
+
+- Added `aer init` command to tracking (was implemented but not listed)
+- Added **Parts System** section for template includes feature
+- Added incremental builds task (skip unchanged writes)
+- Corrected command count: 3/5 implemented (init, palette, procs)
+
+**Key gaps identified:**
+
+1. **Parts not implemented**: The `~{use "path"}` template expression is
+   documented in README.md but not implemented in `template.rs`. Assets
+   with `_` prefix are currently written to target like any other asset.
+
+2. **No incremental writes**: `tool/procs.rs` writes every asset
+   unconditionally. The README claims unchanged content skips writes,
+   but this check doesn't exist yet.
+
+3. **Template expressions**: Only `#`, `if`, `for`, `end` are implemented.
+   The `use` and `date` expressions shown in docstrings are not functional.
+
+### 2026-01-23: Frontmatter Merged into Template
+
+Per concept/README.md, frontmatter extraction was merged into the template
+processor. The standalone `frontmatter` processor was removed.
+
+- Deleted `src/proc/frontmatter.rs`
+- Added frontmatter extraction to `TemplateProcessor::process()`
+- Updated default `Aer.toml` to remove `frontmatter = {}` entry
+- All frontmatter tests moved to `template.rs`

@@ -13,10 +13,9 @@ use serde::Deserialize;
 
 use crate::proc::{
     Asset, Context, ContextValue, MediaType, ProcessesAssets, ProcessingError,
-    canonicalize::CanonicalizeProcessor, frontmatter::FrontmatterProcessor,
-    image::ImageResizeProcessor, js_bundle::JsBundleProcessor, markdown::MarkdownProcessor,
-    minify_html::MinifyHtmlProcessor, minify_js::MinifyJsProcessor, scss::ScssProcessor,
-    template::TemplateProcessor,
+    canonicalize::CanonicalizeProcessor, image::ImageResizeProcessor, js_bundle::JsBundleProcessor,
+    markdown::MarkdownProcessor, minify_html::MinifyHtmlProcessor, minify_js::MinifyJsProcessor,
+    scss::ScssProcessor, template::TemplateProcessor,
 };
 
 /// Default configuration profile.
@@ -37,7 +36,6 @@ target = "public/"
 title = "Aer Site"
 
 [default.procs]
-frontmatter = {}
 markdown = {}
 template = {}
 canonicalize = { root = "http://localhost:1337/" }
@@ -265,7 +263,6 @@ fn run_processor(
     asset: &mut Asset,
 ) -> Result<(), ProcessingError> {
     match name {
-        "frontmatter" => FrontmatterProcessor.process(context, asset),
         "markdown" => MarkdownProcessor {}.process(context, asset),
         "template" => TemplateProcessor.process(context, asset),
         "canonicalize" => {

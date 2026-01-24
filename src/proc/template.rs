@@ -1,4 +1,6 @@
+use codas::types::Text;
 use logos::{Lexer, Logos, Span};
+use toml::Value;
 
 use crate::proc::{Asset, Context, ContextValue, MediaCategory, ProcessesAssets, ProcessingError};
 
@@ -6,8 +8,15 @@ mod tokenizer;
 
 use tokenizer::{TemplateExpression, Token};
 
+pub const FRONTMATTER_DELIMITER: &str = "***";
+
 /// Processes text assets containing template expressions wrapped in
 /// `~{ }`, drawing values from a context of key-value pairs.
+///
+/// Before processing template expressions, the processor extracts TOML
+/// frontmatter from the asset and merges it into the processing context.
+/// Text contains valid frontmatter if it begins with valid TOML content
+/// followed by [FRONTMATTER_DELIMITER] on its own line.
 ///
 /// # Example
 ///
@@ -48,8 +57,9 @@ impl ProcessesAssets for TemplateProcessor {
             return Ok(());
         }
 
-        let template = asset.as_text()?;
-        let mut lexer = Token::lexer(template.as_str());
+        // Extract frontmatter before processing templates.
+        let template = Self::extract_frontmatter(context, asset)?;
+        let mut lexer = Token::lexer(&template);
         let mut output = String::with_capacity(template.len());
         Self::compile_template(context, &mut lexer, &mut output)?;
         asset.replace_with_text(output.into(), asset.media_type().clone());
@@ -59,6 +69,96 @@ impl ProcessesAssets for TemplateProcessor {
 }
 
 impl TemplateProcessor {
+    /// Extracts TOML frontmatter from the asset, merges it into context,
+    /// and returns the remaining template content.
+    fn extract_frontmatter(
+        context: &mut Context,
+        asset: &Asset,
+    ) -> Result<String, ProcessingError> {
+        let content = asset.as_text()?;
+
+        // Look for the frontmatter delimiter on its own line.
+        let delimiter_pattern = format!("\n{}\n", FRONTMATTER_DELIMITER);
+        let split_pos = if content.starts_with(&format!("{}\n", FRONTMATTER_DELIMITER)) {
+            // Edge case: file starts with delimiter (empty frontmatter).
+            Some(0)
+        } else {
+            content.find(&delimiter_pattern)
+        };
+
+        // No frontmatter found - return content as-is.
+        let Some(pos) = split_pos else {
+            tracing::debug!("no frontmatter found in asset {}", asset.path());
+            return Ok(content.to_string());
+        };
+
+        // Split into frontmatter and body.
+        let frontmatter = &content[..pos];
+        let body_start = if pos == 0 {
+            FRONTMATTER_DELIMITER.len() + 1 // Skip "***\n"
+        } else {
+            pos + delimiter_pattern.len() - 1 // Skip "\n***\n", keep trailing newline context
+        };
+        let body = &content[body_start..];
+
+        // Try to parse the frontmatter as TOML.
+        // If parsing fails, treat it as no frontmatter (*** might just be in regular content).
+        let parsed = match Self::parse_toml(frontmatter) {
+            Ok(ctx) => ctx,
+            Err(_) => {
+                tracing::debug!(
+                    "content before *** in {} is not valid TOML, skipping",
+                    asset.path()
+                );
+                return Ok(content.to_string());
+            }
+        };
+
+        // Merge parsed values into the shared context.
+        context.extend(parsed);
+
+        Ok(body.to_string())
+    }
+
+    /// Parses TOML content into context values.
+    fn parse_toml(content: &str) -> Result<Context, ProcessingError> {
+        let table: toml::Table =
+            toml::from_str(content).map_err(|e| ProcessingError::Malformed {
+                message: format!("invalid TOML frontmatter: {}", e).into(),
+            })?;
+
+        let mut context = Context::default();
+        for (key, value) in table {
+            let ctx_value = match value {
+                Value::String(s) => Ok(ContextValue::Text(s.clone().into())),
+                Value::Integer(n) => Ok(ContextValue::Text(n.to_string().into())),
+                Value::Float(n) => Ok(ContextValue::Text(n.to_string().into())),
+                Value::Boolean(b) => Ok(ContextValue::Text(b.to_string().into())),
+                Value::Array(arr) => {
+                    let items: Result<Vec<Text>, _> = arr
+                        .iter()
+                        .map(|v| match v {
+                            Value::String(s) => Ok(s.clone().into()),
+                            Value::Integer(n) => Ok(n.to_string().into()),
+                            Value::Float(n) => Ok(n.to_string().into()),
+                            Value::Boolean(b) => Ok(b.to_string().into()),
+                            _ => Err(ProcessingError::Malformed {
+                                message: "frontmatter arrays may only contain scalar values".into(),
+                            }),
+                        })
+                        .collect();
+                    Ok(ContextValue::List(items?))
+                }
+                Value::Table(_) => Err(ProcessingError::Malformed {
+                    message: "nested tables in frontmatter are not supported".into(),
+                }),
+                Value::Datetime(dt) => Ok(ContextValue::Text(dt.to_string().into())),
+            }?;
+            context.insert(key.into(), ctx_value);
+        }
+        Ok(context)
+    }
+
     /// Compiles a text template containing zero or more [TemplateExpression]s,
     /// appending the compiled results to `output`.
     fn compile_template(
@@ -269,6 +369,22 @@ mod tests {
 
     use super::*;
 
+    fn get_text(ctx: &Context, key: &str) -> Option<String> {
+        let key: Text = key.into();
+        match ctx.get(&key) {
+            Some(ContextValue::Text(t)) => Some(t.to_string()),
+            _ => None,
+        }
+    }
+
+    fn get_list(ctx: &Context, key: &str) -> Option<Vec<String>> {
+        let key: Text = key.into();
+        match ctx.get(&key) {
+            Some(ContextValue::List(items)) => Some(items.iter().map(|t| t.to_string()).collect()),
+            _ => None,
+        }
+    }
+
     #[test]
     fn processes_if_template() {
         let mut asset = Asset::new(
@@ -302,5 +418,106 @@ mod tests {
             r#"Items: [apple, banana, cherry, ]"#,
             asset.as_text().unwrap()
         );
+    }
+
+    #[test]
+    fn extracts_frontmatter() {
+        let content = r#"title = "Hello"
+author = "Test"
+
+***
+
+<h1>~{# title}</h1>"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(get_text(&ctx, "title"), Some("Hello".to_string()));
+        assert_eq!(get_text(&ctx, "author"), Some("Test".to_string()));
+
+        let body = asset.as_text().unwrap();
+        assert!(!body.contains("title ="));
+        assert!(!body.contains("***"));
+        assert!(body.contains("<h1>Hello</h1>"));
+    }
+
+    #[test]
+    fn extracts_arrays() {
+        let content = r#"tags = ["rust", "web", "cli"]
+
+***
+
+Body"#;
+        let mut asset = Asset::new("page.md".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        let tags = get_list(&ctx, "tags").expect("expected list");
+        assert_eq!(tags, vec!["rust", "web", "cli"]);
+    }
+
+    #[test]
+    fn handles_no_frontmatter() {
+        let content = "<h1>No frontmatter here</h1>";
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert!(ctx.is_empty());
+        assert_eq!(asset.as_text().unwrap(), content);
+    }
+
+    #[test]
+    fn handles_various_types() {
+        let content = r#"name = "test"
+count = 42
+ratio = 3.14
+enabled = true
+
+***
+
+Body"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(get_text(&ctx, "name"), Some("test".to_string()));
+        assert_eq!(get_text(&ctx, "count"), Some("42".to_string()));
+        assert_eq!(get_text(&ctx, "ratio"), Some("3.14".to_string()));
+        assert_eq!(get_text(&ctx, "enabled"), Some("true".to_string()));
+    }
+
+    #[test]
+    fn skips_invalid_toml() {
+        // Nested tables are not supported, so this should be treated as no frontmatter.
+        let content = r#"[nested]
+key = "value"
+
+***
+
+Body"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        // Should skip - content unchanged, context empty.
+        assert!(ctx.is_empty());
+        assert_eq!(asset.as_text().unwrap(), content);
+    }
+
+    #[test]
+    fn skips_non_toml_content() {
+        // Random text before *** is not valid TOML.
+        let content = r#"This is just some text
+that happens to have
+***
+a delimiter in it"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        // Should skip - content unchanged, context empty.
+        assert!(ctx.is_empty());
+        assert_eq!(asset.as_text().unwrap(), content);
     }
 }
