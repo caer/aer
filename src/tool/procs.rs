@@ -57,12 +57,12 @@ pub async fn init() -> std::io::Result<()> {
     let config_path = Path::new(DEFAULT_CONFIG_FILE);
 
     if fs::try_exists(config_path).await? {
-        eprintln!("{} already exists", DEFAULT_CONFIG_FILE);
+        tracing::warn!("{} already exists", DEFAULT_CONFIG_FILE);
         return Ok(());
     }
 
     fs::write(config_path, DEFAULT_CONFIG_TOML).await?;
-    eprintln!("Created {}", DEFAULT_CONFIG_FILE);
+    tracing::info!("Created {}", DEFAULT_CONFIG_FILE);
 
     Ok(())
 }
@@ -118,16 +118,16 @@ pub async fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::R
         )
     })?;
 
-    eprintln!("Processing assets from {} to {}", source_path, target_path);
-    eprintln!("Profile: {}", profile_name);
-    eprintln!("Processors: {:?}", config.procs.keys().collect::<Vec<_>>());
+    tracing::info!("Processing assets from {} to {}", source_path, target_path);
+    tracing::info!("Profile: {}", profile_name);
+    tracing::debug!("Processors: {:?}", config.procs.keys().collect::<Vec<_>>());
 
     // Collect all assets from source directory.
     let source = Path::new(source_path);
     let target = Path::new(target_path);
     let mut assets = Vec::new();
     collect_assets(source, &mut assets).await?;
-    eprintln!("Found {} assets", assets.len());
+    tracing::info!("Found {} assets", assets.len());
 
     // Create target directory if it doesn't exist.
     if !fs::try_exists(target).await? {
@@ -156,15 +156,16 @@ pub async fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::R
         match result {
             Ok(()) => success_count += 1,
             Err(e) => {
-                eprintln!("Error processing {}: {}", relative_path, e);
+                tracing::error!("Error processing {}: {}", relative_path, e);
                 error_count += 1;
             }
         }
     }
 
-    eprintln!(
+    tracing::info!(
         "Processed {} assets ({} errors)",
-        success_count, error_count
+        success_count,
+        error_count
     );
 
     Ok(())
@@ -220,7 +221,7 @@ async fn process_asset(
         for (name, config) in procs {
             let result = run_processor(name, config, context, &mut asset);
             if let Err(e) = result {
-                eprintln!("  Processor {} failed on {}: {:?}", name, path, e);
+                tracing::warn!("Processor {} failed on {}: {:?}", name, path, e);
                 // Continue with other processors.
             }
         }
@@ -251,7 +252,7 @@ async fn process_asset(
         fs::create_dir_all(parent).await?;
     }
     fs::write(&target_path, asset.as_bytes()).await?;
-    eprintln!("  {} -> {}", path, processed_path);
+    tracing::debug!("{} -> {}", path, processed_path);
 
     Ok(())
 }
@@ -290,7 +291,7 @@ fn run_processor(
             ImageResizeProcessor::new(width, height).process(context, asset)
         }
         _ => {
-            eprintln!("  Unknown processor: {}", name);
+            tracing::warn!("Unknown processor: {}", name);
             Ok(())
         }
     }

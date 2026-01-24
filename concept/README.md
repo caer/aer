@@ -233,3 +233,9 @@ A `Neutrals` palette derives seven shades from a base color:
 
 A `ColorSystem` provides 9 base colors (neutral, magenta, red, orange, yellow,
 green, cyan, blue, purple) all at lightness `0.58`, with additional derived shades.
+
+### `--troubles` Flag
+
+Every `aer` command accepts a `--troubles` flag. By default, `aer` logs
+high-level information during command execution. When `--troubles` is passed,
+extended logging is enabled to assist with troubleshooting.

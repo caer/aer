@@ -6,6 +6,10 @@ use clap::{Parser, Subcommand};
 #[command(name = "aer")]
 #[command(about = "A command-line toolkit for creatives", long_about = None)]
 struct Cli {
+    /// Enable debug logging for troubleshooting
+    #[arg(long, global = true)]
+    troubles: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -32,6 +36,16 @@ enum Commands {
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let cli = Cli::parse();
+
+    // Install tracing subscriber for logging.
+    let default_level = if cli.troubles { "debug" } else { "info" };
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_level)),
+        )
+        .without_time()
+        .init();
 
     match cli.command {
         Commands::Init => aer::tool::procs::init().await,
