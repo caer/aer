@@ -32,7 +32,7 @@ impl ProcessesAssets for ScssProcessor {
         let css = from_path(Path::new(path), &Options::default())?;
 
         // Update the asset's contents and target extension.
-        asset.replace_with_text(css.into(), MediaType::Scss);
+        asset.replace_with_text(css.into(), MediaType::Css);
 
         Ok(())
     }
