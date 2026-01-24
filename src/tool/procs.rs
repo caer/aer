@@ -1,0 +1,398 @@
+//! Runs asset processors based on a TOML configuration file.
+//!
+//! The `procs` command reads a TOML file containing processor definitions
+//! and context values, then executes matching processors against all assets
+//! in the source directory.
+
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::Path;
+
+use serde::Deserialize;
+
+use crate::proc::{
+    Asset, Context, ContextValue, MediaType, ProcessesAssets, ProcessingError,
+    canonicalize::CanonicalizeProcessor, frontmatter::FrontmatterProcessor,
+    image::ImageResizeProcessor, js_bundle::JsBundleProcessor, markdown::MarkdownProcessor,
+    minify_html::MinifyHtmlProcessor, minify_js::MinifyJsProcessor, scss::ScssProcessor,
+    template::TemplateProcessor,
+};
+
+/// Default configuration profile.
+const DEFAULT_CONFIG_PROFILE: &str = "default";
+
+/// Default configuration file name.
+const DEFAULT_CONFIG_FILE: &str = "Aer.toml";
+
+/// Default configuration file contents.
+const DEFAULT_CONFIG_TOML: &str = r#"# Aer asset processing configuration
+# See: https://github.com/caer/aer
+
+[default.paths]
+source = "site/"
+target = "public/"
+
+[default.context]
+title = "Aer Site"
+
+[default.procs]
+frontmatter = {}
+markdown = {}
+template = {}
+canonicalize = { root = "http://localhost:1337/" }
+scss = {}
+js_bundle = { minify = false }
+minify_html = {}
+minify_js = {}
+image = { max_width = 1920, max_height = 1920 }
+
+[production.procs]
+canonicalize = { root = "https://www.example.com/" }
+js_bundle = { minify = true }
+"#;
+
+/// Creates a default Aer.toml in the current directory if one doesn't exist.
+pub fn init() -> std::io::Result<()> {
+    let config_path = Path::new(DEFAULT_CONFIG_FILE);
+
+    if config_path.exists() {
+        eprintln!("{} already exists", DEFAULT_CONFIG_FILE);
+        return Ok(());
+    }
+
+    fs::write(config_path, DEFAULT_CONFIG_TOML)?;
+    eprintln!("Created {}", DEFAULT_CONFIG_FILE);
+
+    Ok(())
+}
+
+/// Runs the procs command with the given configuration file and optional profile.
+///
+/// If `procs_file` is `None`, looks for `Aer.toml` in the current directory.
+pub fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::Result<()> {
+    let config_path = procs_file.unwrap_or(Path::new(DEFAULT_CONFIG_FILE));
+    let profile_name = profile.unwrap_or(DEFAULT_CONFIG_PROFILE);
+
+    // Try to read and parse the configuration file.
+    let config_toml = fs::read_to_string(config_path)?;
+    let config: Config = toml::from_str(&config_toml).map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("invalid TOML: {}", e),
+        )
+    })?;
+
+    // Load the default profile.
+    let default_profile = config.profiles.get(DEFAULT_CONFIG_PROFILE).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("missing default profile: {}", DEFAULT_CONFIG_PROFILE),
+        )
+    })?;
+
+    // Merge the selected profile over the default.
+    let config = if profile_name == DEFAULT_CONFIG_PROFILE {
+        default_profile.clone()
+    } else {
+        let selected_profile = config.profiles.get(profile_name).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("missing selected profile: {}", profile_name),
+            )
+        })?;
+        default_profile.merge(selected_profile)
+    };
+
+    // Validate source and target paths.
+    let source_path = config.paths.get("source").ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "missing paths.source in context",
+        )
+    })?;
+    let target_path = config.paths.get("target").ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "missing paths.target in context",
+        )
+    })?;
+
+    eprintln!("Processing assets from {} to {}", source_path, target_path);
+    eprintln!("Profile: {}", profile_name);
+    eprintln!("Processors: {:?}", config.procs.keys().collect::<Vec<_>>());
+
+    // Collect all assets from source directory.
+    let source = Path::new(source_path);
+    let target = Path::new(target_path);
+    let mut assets = Vec::new();
+    collect_assets(source, source, &mut assets)?;
+    eprintln!("Found {} assets", assets.len());
+
+    // Create target directory if it doesn't exist.
+    if !target.exists() {
+        fs::create_dir_all(target)?;
+    }
+
+    // Build processing context from config.
+    let mut proc_context = Context::new();
+    for (key, value) in config.context {
+        proc_context.insert(key.clone().into(), ContextValue::Text(value.clone().into()));
+    }
+
+    // Process each asset.
+    let mut success_count = 0;
+    let mut error_count = 0;
+    for (relative_path, content) in assets {
+        let result = process_asset(
+            &relative_path,
+            content,
+            &config.procs,
+            &mut proc_context,
+            target,
+        );
+
+        match result {
+            Ok(()) => success_count += 1,
+            Err(e) => {
+                eprintln!("Error processing {}: {}", relative_path, e);
+                error_count += 1;
+            }
+        }
+    }
+
+    eprintln!(
+        "Processed {} assets ({} errors)",
+        success_count, error_count
+    );
+
+    Ok(())
+}
+
+/// Recursively collects all assets from `current` path
+/// relative to `root` path, storing them in `assets`.
+fn collect_assets(
+    root: &Path,
+    current: &Path,
+    assets: &mut Vec<(String, Vec<u8>)>,
+) -> std::io::Result<()> {
+    if !current.is_dir() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(current)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            collect_assets(root, &path, assets)?;
+        } else if path.is_file() {
+            let relative = path.strip_prefix(root).map_err(std::io::Error::other)?;
+            let relative_str = relative.to_string_lossy().to_string();
+            let content = fs::read(&path)?;
+            assets.push((relative_str, content));
+        }
+    }
+
+    Ok(())
+}
+
+/// Processes a single asset through all matching processors.
+fn process_asset(
+    path: &str,
+    content: Vec<u8>,
+    procs: &BTreeMap<String, ProcessorConfig>,
+    context: &mut Context,
+    target: &Path,
+) -> std::io::Result<()> {
+    let mut asset = Asset::new(path.into(), content);
+
+    // Track which processors have run to avoid infinite loops.
+    let mut processed_types: Vec<MediaType> = Vec::new();
+
+    loop {
+        let current_type = asset.media_type().clone();
+
+        // If we've already processed this type, we're done.
+        if processed_types.contains(&current_type) {
+            break;
+        }
+        processed_types.push(current_type.clone());
+
+        // Run all processors in order.
+        for (name, config) in procs {
+            let result = run_processor(name, config, context, &mut asset);
+            if let Err(e) = result {
+                eprintln!("  Processor {} failed on {}: {:?}", name, path, e);
+                // Continue with other processors.
+            }
+        }
+
+        // If the media type changed, we need to re-evaluate processors.
+        if asset.media_type() == &current_type {
+            break;
+        }
+    }
+
+    // Determine the assets' extension based on media type.
+    let new_extension = asset
+        .media_type()
+        .extensions()
+        .first()
+        .expect("all media types have at least one extension");
+
+    // Replace the existing extension.
+    let processed_path = if let Some(dot_pos) = path.rfind('.') {
+        format!("{}.{}", &path[..dot_pos], new_extension)
+    } else {
+        format!("{}.{}", path, new_extension)
+    };
+    let target_path = target.join(&processed_path);
+
+    // Write the processed asset to target.
+    if let Some(parent) = target_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&target_path, asset.as_bytes())?;
+    eprintln!("  {} -> {}", path, processed_path);
+
+    Ok(())
+}
+
+/// Runs a single processor against an asset.
+fn run_processor(
+    name: &str,
+    config: &ProcessorConfig,
+    context: &mut Context,
+    asset: &mut Asset,
+) -> Result<(), ProcessingError> {
+    match name {
+        "frontmatter" => FrontmatterProcessor.process(context, asset),
+        "markdown" => MarkdownProcessor {}.process(context, asset),
+        "template" => TemplateProcessor.process(context, asset),
+        "canonicalize" => {
+            let root = config.root.as_deref().unwrap_or("http://localhost/");
+            if let Some(processor) = CanonicalizeProcessor::new(root) {
+                processor.process(context, asset)
+            } else {
+                Err(ProcessingError::Malformed {
+                    message: format!("invalid root URL: {}", root).into(),
+                })
+            }
+        }
+        "scss" => ScssProcessor {}.process(context, asset),
+        "js_bundle" => {
+            let minify = config.minify.unwrap_or(false);
+            JsBundleProcessor::new(minify).process(context, asset)
+        }
+        "minify_html" => MinifyHtmlProcessor.process(context, asset),
+        "minify_js" => MinifyJsProcessor.process(context, asset),
+        "image" => {
+            let width = config.max_width.unwrap_or(1920);
+            let height = config.max_height.unwrap_or(1920);
+            ImageResizeProcessor::new(width, height).process(context, asset)
+        }
+        _ => {
+            eprintln!("  Unknown processor: {}", name);
+            Ok(())
+        }
+    }
+}
+
+/// Global configuration.
+///
+/// This is a top-level configuration containing
+/// a named table for each profile.
+#[derive(Debug, Deserialize)]
+struct Config {
+    #[serde(flatten)]
+    profiles: BTreeMap<String, ConfigProfile>,
+}
+
+/// Profile-level configuration in a [Config].
+#[derive(Clone, Debug, Deserialize)]
+struct ConfigProfile {
+    #[serde(default)]
+    procs: BTreeMap<String, ProcessorConfig>,
+    #[serde(default)]
+    context: BTreeMap<String, String>,
+    #[serde(default)]
+    paths: BTreeMap<String, String>,
+}
+
+impl ConfigProfile {
+    /// Merges this profile with another, with `other`
+    /// taking precedence, and returning the merged profile.
+    fn merge(&self, other: &ConfigProfile) -> ConfigProfile {
+        let mut merged = self.clone();
+
+        // Merge paths
+        for (key, value) in &other.paths {
+            merged.paths.insert(key.clone(), value.clone());
+        }
+
+        // Merge context
+        for (key, value) in &other.context {
+            merged.context.insert(key.clone(), value.clone());
+        }
+
+        // Merge procs
+        for (key, value) in &other.procs {
+            merged.procs.insert(key.clone(), value.clone());
+        }
+
+        merged
+    }
+}
+
+/// Configuration for a single processor.
+#[derive(Debug, Default, Deserialize, Clone)]
+struct ProcessorConfig {
+    // canonicalize options
+    root: Option<String>,
+    // js_bundle options
+    minify: Option<bool>,
+    // image options
+    max_width: Option<u32>,
+    max_height: Option<u32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merges_profiles() {
+        let toml = r#"
+[default.paths]
+source = "site/"
+target = "public/"
+
+[default.procs]
+canonicalize = { root = "http://localhost/" }
+js_bundle = { minify = false }
+
+[production.paths]
+target = "dist/"
+
+[production.procs]
+canonicalize = { root = "https://prod.example.com/" }
+js_bundle = { minify = true }
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        let default_profile = config.profiles.get("default").unwrap();
+        let production_profile = config.profiles.get("production").unwrap();
+        let merged = default_profile.merge(production_profile);
+
+        // Paths should be merged (source from default, target from production).
+        assert_eq!(merged.paths.get("source").unwrap(), "site/");
+        assert_eq!(merged.paths.get("target").unwrap(), "dist/");
+        // Procs should be merged with production overrides.
+        let canonicalize = merged.procs.get("canonicalize").unwrap();
+        assert_eq!(
+            canonicalize.root,
+            Some("https://prod.example.com/".to_string())
+        );
+        let js_bundle = merged.procs.get("js_bundle").unwrap();
+        assert_eq!(js_bundle.minify, Some(true));
+    }
+}

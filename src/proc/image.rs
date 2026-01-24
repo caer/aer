@@ -22,6 +22,12 @@ pub struct ImageResizeProcessor {
     height: u32,
 }
 
+impl ImageResizeProcessor {
+    pub fn new(width: u32, height: u32) -> Self {
+        Self { width, height }
+    }
+}
+
 impl ProcessesAssets for ImageResizeProcessor {
     fn process(&self, _context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
         // Skip assets that aren't images.

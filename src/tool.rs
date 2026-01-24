@@ -3,3 +3,4 @@
 
 mod color;
 pub mod palette;
+pub mod procs;

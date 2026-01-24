@@ -30,6 +30,13 @@ pub struct JsBundleProcessor {
 }
 
 impl JsBundleProcessor {
+    /// Creates a new JS bundle processor.
+    pub fn new(minify: bool) -> Self {
+        Self { minify }
+    }
+}
+
+impl JsBundleProcessor {
     /// Bundles the JavaScript file at `entry_path` and returns the bundled code.
     ///
     /// Modules are resolved relative to the entry point's parent directory.

@@ -14,12 +14,12 @@
 | scss | ✓ | `src/proc/scss.rs` |
 | template | ✓ | `src/proc/template.rs` |
 
-## Commands: 1/4 Implemented
+## Commands: 2/4 Implemented
 
 | Command | Status | Description |
 |---------|--------|-------------|
 | `aer proc` | ❌ | Single processor CLI with glob input |
-| `aer procs` | ❌ | TOML pipeline with profiles |
+| `aer procs` | ✓ | TOML pipeline with profiles |
 | `aer serve` | ❌ | Dev server with file watching |
 | `aer palette` | ✓ | Interactive color palette TUI |
 
@@ -29,27 +29,27 @@
 - [x] Add `clap` for argument parsing
 - [x] Implement `aer palette` subcommand (TUI in `src/tool/palette.rs`)
 - [ ] Implement `aer proc <processor> <input> <target_path> [--options]`
-- [ ] Implement `aer procs <procs_file> [-p profile]`
+- [x] Implement `aer procs <procs_file> [-p profile]`
 - [ ] Implement `aer serve [-p profile]`
 
 ### File I/O Layer
-- [ ] Read source assets from filesystem
-- [ ] Write processed assets to target directory
-- [ ] Preserve directory structure from glob patterns
+- [x] Read source assets from filesystem
+- [x] Write processed assets to target directory
+- [x] Preserve directory structure from glob patterns
 
 ### Glob Pattern Support
 - [ ] Match files like `**/*.scss`, `**/*.html`
 - [ ] Integrate with `aer proc` command
 
 ### TOML Config Parsing
-- [ ] Parse `[default.context]` for shared context values
-- [ ] Parse `[default.procs]` for processor definitions
-- [ ] Parse `paths.source` and `paths.target`
+- [x] Parse `[default.context]` for shared context values
+- [x] Parse `[default.procs]` for processor definitions
+- [x] Parse `paths.source` and `paths.target`
 
 ### Profile System
-- [ ] Load `[default]` as base configuration
-- [ ] Merge custom profiles (e.g., `[production]`) over default
-- [ ] Support `-p` / `--profile` flag
+- [x] Load `[default]` as base configuration
+- [x] Merge custom profiles (e.g., `[production]`) over default
+- [x] Support `-p` / `--profile` flag
 
 ### File Watcher (for `aer serve`)
 - [ ] Watch `paths.source` for changes
@@ -61,10 +61,10 @@
 - [ ] Serve from `paths.target` directory
 
 ### Processor Pipeline
-- [ ] Execute processors in TOML-defined order
-- [ ] Match processors to assets by media type
-- [ ] Re-evaluate processors when media type changes (e.g., `.md` → `.html`)
-- [ ] Continue processing other assets when one processor fails
+- [x] Execute processors in TOML-defined order
+- [x] Match processors to assets by media type
+- [x] Re-evaluate processors when media type changes (e.g., `.md` → `.html`)
+- [x] Continue processing other assets when one processor fails
 
 ---
 

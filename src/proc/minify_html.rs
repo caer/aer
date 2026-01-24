@@ -19,7 +19,7 @@ impl ProcessesAssets for MinifyHtmlProcessor {
         let mut bytes = asset.as_bytes().to_vec();
         let cfg = Cfg {
             minify_css: true,
-            minify_js: true,
+            minify_js: false,
         };
 
         match in_place(&mut bytes, &cfg) {

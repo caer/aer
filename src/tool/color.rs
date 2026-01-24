@@ -100,7 +100,7 @@ impl Neutrals {
         }
     }
 
-    pub fn to_cmyk_adjusted(self) -> Self {
+    pub fn to_cmyk_adjusted(&self) -> Self {
         Self {
             darkest: cmyk::from_cmyk(&cmyk::to_cmyk(&self.darkest)),
             darker: cmyk::from_cmyk(&cmyk::to_cmyk(&self.darker)),
