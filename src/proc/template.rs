@@ -10,6 +10,9 @@ use tokenizer::{TemplateExpression, Token};
 
 pub const FRONTMATTER_DELIMITER: &str = "***";
 
+/// Prefix used to store parts in the processing context.
+pub const PART_CONTEXT_PREFIX: &str = "_part:";
+
 /// Processes text assets containing template expressions wrapped in
 /// `~{ }`, drawing values from a context of key-value pairs.
 ///
@@ -58,8 +61,8 @@ impl ProcessesAssets for TemplateProcessor {
         }
 
         // Extract frontmatter before processing templates.
-        let template = Self::extract_frontmatter(context, asset)?;
-        let mut lexer = Token::lexer(&template);
+        let template = Self::extract_frontmatter(context, asset.as_text()?);
+        let mut lexer = Token::lexer(template);
         let mut output = String::with_capacity(template.len());
         Self::compile_template(context, &mut lexer, &mut output)?;
         asset.replace_with_text(output.into(), asset.media_type().clone());
@@ -69,55 +72,43 @@ impl ProcessesAssets for TemplateProcessor {
 }
 
 impl TemplateProcessor {
-    /// Extracts TOML frontmatter from the asset, merges it into context,
-    /// and returns the remaining template content.
-    fn extract_frontmatter(
-        context: &mut Context,
-        asset: &Asset,
-    ) -> Result<String, ProcessingError> {
-        let content = asset.as_text()?;
-
+    /// Extracts TOML frontmatter from some text,
+    /// merges it into context, and returns the remaining content.
+    ///
+    /// If the content before `***` is not valid TOML, returns the original
+    /// content unchanged (the `***` might just be regular content).
+    fn extract_frontmatter<'a>(context: &mut Context, text: &'a Text) -> &'a str {
         // Look for the frontmatter delimiter on its own line.
         let delimiter_pattern = format!("\n{}\n", FRONTMATTER_DELIMITER);
-        let split_pos = if content.starts_with(&format!("{}\n", FRONTMATTER_DELIMITER)) {
-            // Edge case: file starts with delimiter (empty frontmatter).
+        let split_pos = if text.starts_with(&format!("{}\n", FRONTMATTER_DELIMITER)) {
             Some(0)
         } else {
-            content.find(&delimiter_pattern)
+            text.find(&delimiter_pattern)
         };
 
         // No frontmatter found - return content as-is.
         let Some(pos) = split_pos else {
-            tracing::debug!("no frontmatter found in asset {}", asset.path());
-            return Ok(content.to_string());
+            return text.as_str();
         };
 
         // Split into frontmatter and body.
-        let frontmatter = &content[..pos];
+        let frontmatter = &text[..pos];
         let body_start = if pos == 0 {
-            FRONTMATTER_DELIMITER.len() + 1 // Skip "***\n"
+            FRONTMATTER_DELIMITER.len() + 1
         } else {
-            pos + delimiter_pattern.len() - 1 // Skip "\n***\n", keep trailing newline context
+            pos + delimiter_pattern.len() - 1
         };
-        let body = &content[body_start..];
+        let body = &text[body_start..];
 
-        // Try to parse the frontmatter as TOML.
-        // If parsing fails, treat it as no frontmatter (*** might just be in regular content).
-        let parsed = match Self::parse_toml(frontmatter) {
-            Ok(ctx) => ctx,
-            Err(_) => {
-                tracing::debug!(
-                    "content before *** in {} is not valid TOML, skipping",
-                    asset.path()
-                );
-                return Ok(content.to_string());
+        // Try to parse the frontmatter as TOML. If parsing fails, treat
+        // it as no frontmatter (*** might just be in regular content).
+        match Self::parse_toml(frontmatter) {
+            Ok(parsed) => {
+                context.extend(parsed);
+                body
             }
-        };
-
-        // Merge parsed values into the shared context.
-        context.extend(parsed);
-
-        Ok(body.to_string())
+            Err(_) => text,
+        }
     }
 
     /// Parses TOML content into context values.
@@ -228,6 +219,35 @@ impl TemplateProcessor {
                                 let mut block_lexer = Token::lexer(block_text);
                                 Self::compile_template(context, &mut block_lexer, output)?;
                             }
+                        }
+
+                        // Use statement: ~{ use "path/to/part" }
+                        "use" => {
+                            let path = args
+                                .first()
+                                .ok_or(ProcessingError::Compilation {
+                                    message: "missing path in use expression".into(),
+                                })?
+                                .try_as_string()?;
+
+                            // Look up the part in the context.
+                            let part_key: Text = format!("{}{}", PART_CONTEXT_PREFIX, path).into();
+                            let part_content = match context.get(&part_key) {
+                                Some(ContextValue::Text(content)) => content,
+                                _ => {
+                                    return Err(ProcessingError::Compilation {
+                                        message: format!("part not found: {}", path).into(),
+                                    });
+                                }
+                            };
+
+                            // Extract frontmatter from the part and merge into context.
+                            let mut part_context = context.clone();
+                            let body = Self::extract_frontmatter(&mut part_context, part_content);
+
+                            // Compile the part content with the merged context.
+                            let mut part_lexer = Token::lexer(body);
+                            Self::compile_template(&part_context, &mut part_lexer, output)?;
                         }
 
                         // For loop: ~{ for item in items } ... ~{ end }
@@ -519,5 +539,85 @@ a delimiter in it"#;
         // Should skip - content unchanged, context empty.
         assert!(ctx.is_empty());
         assert_eq!(asset.as_text().unwrap(), content);
+    }
+
+    #[test]
+    fn includes_part() {
+        let content = r#"<html>~{use "_header.html"}<body>Hello</body></html>"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+
+        // Add a part to the context.
+        let part_key: Text = format!("{}_header.html", PART_CONTEXT_PREFIX).into();
+        ctx.insert(
+            part_key,
+            ContextValue::Text("<header>Header</header>".into()),
+        );
+
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(
+            asset.as_text().unwrap(),
+            "<html><header>Header</header><body>Hello</body></html>"
+        );
+    }
+
+    #[test]
+    fn includes_part_with_frontmatter() {
+        // Part frontmatter is available within the part, but not in the parent.
+        let content = r#"<html>~{use "_meta.html"}</html>"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+
+        // Add a part with frontmatter that uses its own variable.
+        // Note: content after *** delimiter includes a leading newline.
+        let part_key: Text = format!("{}_meta.html", PART_CONTEXT_PREFIX).into();
+        let part_content = "charset = \"utf-8\"\n\n***\n<meta charset=\"~{# charset}\">";
+        ctx.insert(part_key, ContextValue::Text(part_content.into()));
+
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        // The part's frontmatter is used within the part itself.
+        assert_eq!(
+            asset.as_text().unwrap(),
+            "<html>\n<meta charset=\"utf-8\"></html>"
+        );
+    }
+
+    #[test]
+    fn includes_nested_parts() {
+        let content = r#"~{use "_layout.html"}"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+
+        // Add nested parts.
+        let layout_key: Text = format!("{}_layout.html", PART_CONTEXT_PREFIX).into();
+        ctx.insert(
+            layout_key,
+            ContextValue::Text("<html>~{use \"_header.html\"}<body>Content</body></html>".into()),
+        );
+
+        let header_key: Text = format!("{}_header.html", PART_CONTEXT_PREFIX).into();
+        ctx.insert(
+            header_key,
+            ContextValue::Text("<header>Header</header>".into()),
+        );
+
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(
+            asset.as_text().unwrap(),
+            "<html><header>Header</header><body>Content</body></html>"
+        );
+    }
+
+    #[test]
+    fn part_not_found_error() {
+        let content = r#"~{use "_missing.html"}"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+
+        let result = TemplateProcessor.process(&mut ctx, &mut asset);
+        assert!(result.is_err());
     }
 }

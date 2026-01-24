@@ -54,9 +54,9 @@
 - [x] Support `-p` / `--profile` flag
 
 ### Parts System (Template Includes)
-- [ ] Cache assets with `_` prefix without writing to target
-- [ ] Implement `~{use "path"}` template expression to include parts
-- [ ] Extract frontmatter from parts when included
+- [x] Cache assets with `_` prefix without writing to target
+- [x] Implement `~{use "path"}` template expression to include parts
+- [x] Extract frontmatter from parts when included
 
 ### File Watcher (for `aer serve`)
 - [ ] Watch `paths.source` for changes
@@ -116,8 +116,8 @@ Updated TODO to reflect actual implementation state:
    unconditionally. The README claims unchanged content skips writes,
    but this check doesn't exist yet.
 
-3. **Template expressions**: Only `#`, `if`, `for`, `end` are implemented.
-   The `use` and `date` expressions shown in docstrings are not functional.
+3. **Template expressions**: `#`, `if`, `for`, `end`, and `use` are implemented.
+   The `date` expression shown in docstrings is not yet functional.
 
 ### 2026-01-23: Frontmatter Merged into Template
 
@@ -128,3 +128,14 @@ processor. The standalone `frontmatter` processor was removed.
 - Added frontmatter extraction to `TemplateProcessor::process()`
 - Updated default `Aer.toml` to remove `frontmatter = {}` entry
 - All frontmatter tests moved to `template.rs`
+
+### 2026-01-23: Parts System Implemented
+
+Implemented template includes via the Parts system:
+
+- Assets with `_` prefix in any path component are cached without processing
+- Parts are stored in context with `_part:` prefix (e.g., `_part:_header.html`)
+- `~{use "path"}` expression includes cached parts
+- Frontmatter in parts is extracted and available within the part itself
+- Added `is_part()` helper in `tool/procs.rs`
+- Added `PART_PREFIX` constant and `extract_frontmatter_from_content()` in `template.rs`

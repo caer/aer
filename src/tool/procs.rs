@@ -13,9 +13,14 @@ use serde::Deserialize;
 
 use crate::proc::{
     Asset, Context, ContextValue, MediaType, ProcessesAssets, ProcessingError,
-    canonicalize::CanonicalizeProcessor, image::ImageResizeProcessor, js_bundle::JsBundleProcessor,
-    markdown::MarkdownProcessor, minify_html::MinifyHtmlProcessor, minify_js::MinifyJsProcessor,
-    scss::ScssProcessor, template::TemplateProcessor,
+    canonicalize::CanonicalizeProcessor,
+    image::ImageResizeProcessor,
+    js_bundle::JsBundleProcessor,
+    markdown::MarkdownProcessor,
+    minify_html::MinifyHtmlProcessor,
+    minify_js::MinifyJsProcessor,
+    scss::ScssProcessor,
+    template::{PART_CONTEXT_PREFIX, TemplateProcessor},
 };
 
 /// Default configuration profile.
@@ -49,6 +54,15 @@ image = { max_width = 1920, max_height = 1920 }
 canonicalize = { root = "https://www.example.com/" }
 js_bundle = { minify = true }
 "#;
+
+/// Path prefix used to identify parts to store in the processing context.
+const PART_PATH_PREFIX: &str = "_";
+
+/// Returns true if the path represents a part.
+fn is_part(path: &str) -> bool {
+    path.split(['/', '\\'])
+        .any(|component| component.starts_with(PART_PATH_PREFIX))
+}
 
 /// Creates a default Aer.toml in the current directory if one doesn't exist.
 pub async fn init() -> std::io::Result<()> {
@@ -138,10 +152,27 @@ pub async fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::R
         proc_context.insert(key.clone().into(), ContextValue::Text(value.clone().into()));
     }
 
-    // Process each asset.
+    // Separate parts from regular assets and cache parts in context.
+    let mut regular_assets = Vec::new();
+    let mut part_count = 0;
+    for (relative_path, content) in assets {
+        if is_part(&relative_path) {
+            // Store part content in context (raw, without processing).
+            let part_key = format!("{}{}", PART_CONTEXT_PREFIX, relative_path);
+            let content_str = String::from_utf8_lossy(&content).to_string();
+            proc_context.insert(part_key.into(), ContextValue::Text(content_str.into()));
+            part_count += 1;
+            tracing::debug!("Cached part: {}", relative_path);
+        } else {
+            regular_assets.push((relative_path, content));
+        }
+    }
+    tracing::info!("Cached {} parts", part_count);
+
+    // Process each regular asset.
     let mut success_count = 0;
     let mut error_count = 0;
-    for (relative_path, content) in assets {
+    for (relative_path, content) in regular_assets {
         let result = process_asset(
             &relative_path,
             content,
@@ -355,6 +386,20 @@ struct ProcessorConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detects_parts() {
+        // Files starting with underscore are parts.
+        assert!(is_part("_header.html"));
+        assert!(is_part("_parts/footer.html"));
+        assert!(is_part("templates/_layout.html"));
+        assert!(is_part("a/b/_c/d.html"));
+
+        // Regular files are not parts.
+        assert!(!is_part("index.html"));
+        assert!(!is_part("pages/about.html"));
+        assert!(!is_part("my_file.html")); // underscore in middle, not at start of component
+    }
 
     #[test]
     fn merges_profiles() {

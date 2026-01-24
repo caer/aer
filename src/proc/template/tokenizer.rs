@@ -56,6 +56,15 @@ impl TemplateExpression {
             }),
         }
     }
+
+    pub fn try_as_string(&self) -> Result<Text, ProcessingError> {
+        match self {
+            TemplateExpression::String(value) => Ok(value.clone()),
+            expression => Err(ProcessingError::Compilation {
+                message: format!("expected string; got {:?}", expression).into(),
+            }),
+        }
+    }
 }
 
 /// Parses a series of [TemplateToken]s into a [TemplateExpression].
