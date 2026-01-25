@@ -106,7 +106,7 @@ pub async fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::R
         proc_context.insert(key.clone().into(), ContextValue::Text(value.clone().into()));
     }
 
-    // Separate parts from regular assets and cache parts in context.
+    // Separate parts from regular assets and cache them in context.
     let mut regular_assets = Vec::new();
     let mut part_count = 0;
     for (relative_path, content) in assets {
@@ -131,7 +131,7 @@ pub async fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::R
             &relative_path,
             content,
             &config.procs,
-            &mut proc_context,
+            &proc_context,
             target,
         )
         .await;
@@ -183,10 +183,11 @@ async fn process_asset(
     path: &str,
     content: Vec<u8>,
     procs: &BTreeMap<String, ProcessorConfig>,
-    context: &mut Context,
+    context: &Context,
     target: &Path,
 ) -> std::io::Result<()> {
     let mut asset = Asset::new(path.into(), content);
+    let mut context = context.clone();
 
     // Track which processors have run to avoid infinite loops.
     let mut processed_types: Vec<MediaType> = Vec::new();
@@ -200,11 +201,24 @@ async fn process_asset(
         }
         processed_types.push(current_type.clone());
 
-        // Run all processors in order.
-        for (name, config) in procs {
-            let result = run_processor(name, config, context, &mut asset);
+        // Run template processor first to extract frontmatter before any content modification.
+        if let Some(config) = procs.get("template") {
+            let result = run_processor("template", config, &mut context, &mut asset);
             if let Err(e) = result {
-                tracing::warn!("Processor {} failed on {}: {:?}", name, path, e);
+                tracing::warn!("Processor `template` failed on {}: {:?}", path, e);
+            }
+        }
+
+        // Run remaining processors in order.
+        for (name, config) in procs {
+            // Skip the template processor since we already ran it.
+            if name == "template" {
+                continue;
+            }
+
+            let result = run_processor(name, config, &mut context, &mut asset);
+            if let Err(e) = result {
+                tracing::warn!("Processor `{}` failed on {}: {:?}", name, path, e);
                 // Continue with other processors.
             }
         }

@@ -194,6 +194,24 @@ impl CanonicalizeProcessor {
                         }
                     }
 
+                    // Canonicalize the `content` attribute of meta tags if
+                    // it looks like a URL, handling common cases like Open Graph Protocol tags.
+                    if el.tag_name() == "meta"
+                        && let Some(value) = el.get_attribute("content")
+                    {
+                        let trimmed = value.trim();
+                        // Only canonicalize if it looks like a URL path.
+                        if trimmed.starts_with('/')
+                            || trimmed.starts_with("./")
+                            || trimmed.starts_with("../")
+                        {
+                            let canonical = self.canonicalize_url(&value, &path);
+                            if canonical != value {
+                                el.set_attribute("content", &canonical).ok();
+                            }
+                        }
+                    }
+
                     if let Some(style) = el.get_attribute("style") {
                         let canonical = self.process_css(&style, &path);
                         if canonical != style {
@@ -214,17 +232,23 @@ impl CanonicalizeProcessor {
 
 impl ProcessesAssets for CanonicalizeProcessor {
     fn process(&self, _context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
-        if asset.media_type() != &MediaType::Html {
-            tracing::debug!(
-                "skipping asset {}: not HTML: {}",
-                asset.path(),
-                asset.media_type().name()
-            );
-            return Ok(());
+        match asset.media_type() {
+            MediaType::Html => {
+                let canonical = self.process_html(asset.as_text()?, asset.path())?;
+                asset.replace_with_text(canonical.into(), MediaType::Html);
+            }
+            MediaType::Css => {
+                let canonical = self.process_css(asset.as_text()?, asset.path());
+                asset.replace_with_text(canonical.into(), MediaType::Css);
+            }
+            _ => {
+                tracing::debug!(
+                    "skipping asset {}: not HTML or CSS: {}",
+                    asset.path(),
+                    asset.media_type().name()
+                );
+            }
         }
-
-        let canonical = self.process_html(asset.as_text()?, asset.path())?;
-        asset.replace_with_text(canonical.into(), MediaType::Html);
         Ok(())
     }
 }
@@ -364,11 +388,26 @@ mod tests {
     }
 
     #[test]
-    fn skips_non_html_assets() {
+    fn skips_non_html_css_assets() {
         let p = processor();
         let mut asset = Asset::new("script.js".into(), b"const x = '/api'".to_vec());
         p.process(&mut Context::default(), &mut asset).unwrap();
         assert_eq!(asset.as_text().unwrap(), "const x = '/api'");
+    }
+
+    #[test]
+    fn processes_css_asset() {
+        let p = processor();
+        let mut asset = Asset::new(
+            "styles/main.css".into(),
+            b"@font-face { src: url('/fonts/test.ttf'); }".to_vec(),
+        );
+        assert_eq!(asset.media_type(), &MediaType::Css);
+        p.process(&mut Context::default(), &mut asset).unwrap();
+        assert_eq!(
+            asset.as_text().unwrap(),
+            "@font-face { src: url('https://example.com/fonts/test.ttf'); }"
+        );
     }
 
     #[test]
@@ -385,5 +424,22 @@ mod tests {
                 .unwrap()
                 .contains("https://example.com/blog/index.html")
         );
+    }
+
+    #[test]
+    fn canonicalizes_meta_content_attribute() {
+        let p = processor();
+        let html = r#"<meta property="og:image" content="/images/og.png">"#;
+        let result = p.process_html(html, &"/page.html".into()).unwrap();
+        assert!(result.contains(r#"content="https://example.com/images/og.png""#));
+    }
+
+    #[test]
+    fn preserves_non_url_meta_content() {
+        let p = processor();
+        let html = r#"<meta name="description" content="A description">"#;
+        let result = p.process_html(html, &"/page.html".into()).unwrap();
+        // Non-URL content should be preserved as-is.
+        assert!(result.contains(r#"content="A description""#));
     }
 }

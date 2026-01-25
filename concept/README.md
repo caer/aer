@@ -6,8 +6,8 @@
 
 ### `canonicalize` Processor
 
-Transforms URL paths in HTML assets to fully-qualified
-URLs based on a `root` parameter.
+Transforms URL paths in `HTML` and `CSS` assets to
+fully-qualified URLs based on a `root` parameter.
 
 Absolute paths are canonicalized relative to `root`:
 `/path/to/file` becomes `{root}/path/to/file`.
@@ -25,7 +25,9 @@ The following URLs within HTML assets are processed:
 - URL-containing attributes like `href`, `src`, `action`, 
   `poster`, `data`, `cite`, `formaction`. 
   
-- `url()` values in inline `style` attributes. 
+- URL values in `meta` tags.
+
+- `url()` values in inline `style` attributes.
 
 URLs _within_ `<script>` tags are not processed. Fully-qualified URLs
 (like `https://localhost`) and special URLs (`data:`, `javascript:`,
@@ -73,7 +75,8 @@ frontmatter from the asset and merges it into the processing context.
 
 Text contains valid TOML frontmatter if it _begins_ with valid TOML
 content followed by `***` on a newline. The frontmatter is removed
-from the asset after extraction.
+from the asset after extraction. Frontmatter values are scoped to the
+asset being processed and do not affect other assets.
 
 Example of an HTML asset containing frontmatter:
 
@@ -91,6 +94,7 @@ Template expressions are wrapped in `~{ }`. The following expressions are suppor
 
 - `~{# variable_name}` outputs the value of a variable
 - `~{if condition}...~{end}` renders content if the condition is truthy (non-empty and not `"false"` or `"0"`)
+- `~{if not condition}...~{end}` renders content if the condition is _not_ truthy.
 - `~{for item in items}...~{end}` iterates over a list
 - `~{use "path"}` includes a part by its path (see Asset Writing)
 
@@ -108,6 +112,14 @@ Example template:
 ~{end}
 </ul>
 ```
+
+### Patterns
+
+Template frontmatter may optionally contain a `pattern` field, which can
+be set to the path of an existing part (see Asset Writing). If set, the
+processor will save the rendered asset contents onto the processing context
+in the `content` variable, and replace the asset with the rendered contents
+of the part.
 
 ### `aer proc` Command
 
