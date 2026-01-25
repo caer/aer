@@ -4,7 +4,7 @@ This file contains a chronological list of all major changes made to this crate.
 
 ### 🚀 Features
 
-- Add tokenizer/lexer for ~{..} style templates.
+- Add tokenizer/lexer for {~ .. } style templates.
 - Partially implement template processor
 - This is what we in the industry call a mess
 - Added JS bundling processor using brk_rolldown (#10)

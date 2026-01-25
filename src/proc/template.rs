@@ -17,7 +17,7 @@ pub const PART_CONTEXT_PREFIX: &str = "_part:";
 const CONTENT_KEY: &str = "content";
 
 /// Processes text assets containing template expressions wrapped in
-/// `~{ }`, drawing values from a context of key-value pairs.
+/// `{~ }`, drawing values from a context of key-value pairs.
 ///
 /// Before processing template expressions, the processor extracts TOML
 /// frontmatter from the asset and merges it into the processing context.
@@ -29,15 +29,15 @@ const CONTENT_KEY: &str = "content";
 /// Given a context containing `name = 'Aer', admin = 'true', users = ['Ray', 'Roy']`, this template:
 ///
 /// ```html
-/// <div> Hi ~{# name}! It's ~{date "yyyy-mm-dd"}.</div>
-/// ~{if admin}
+/// <div> Hi {~ get name}! It's {~ date "yyyy-mm-dd"}.</div>
+/// {~ if admin}
 ///     <p> You're an administrator, btw.</p>
 ///     <ul>
-///     ~{for user in users}
-///         <li>~{# user}</li>
-///     ~{end}
+///     {~ for user in users}
+///         <li>{~ get user}</li>
+///     {~ end}
 ///     </ul>
-/// ~{end}
+/// {~ end}
 /// ```
 ///
 /// would compile to:
@@ -195,8 +195,8 @@ impl TemplateProcessor {
                     name, args, ..
                 }))) => {
                     match name.as_str() {
-                        // Variable reference: ~{ # variable_name }
-                        "#" => {
+                        // Variable reference: {~ get variable_name }
+                        "get" => {
                             let identifier = args
                                 .first()
                                 .ok_or(ProcessingError::Compilation {
@@ -219,13 +219,13 @@ impl TemplateProcessor {
                                     items_string.push(']');
                                     items_string.into()
                                 }
-                                None => format!("~{{# {} }}~", identifier).into(),
+                                None => format!("{{~ get {} }}", identifier).into(),
                             };
 
                             output.push_str(&value);
                         }
 
-                        // If statement: ~{ if [not] condition } ... ~{ end }
+                        // If statement: {~ if [not] condition } ... {~ end }
                         "if" => {
                             let first_arg = args
                                 .first()
@@ -269,7 +269,7 @@ impl TemplateProcessor {
                             }
                         }
 
-                        // Use statement: ~{ use "path/to/part" }
+                        // Use statement: {~ use "path/to/part" }
                         "use" => {
                             let path = args
                                 .first()
@@ -298,7 +298,7 @@ impl TemplateProcessor {
                             Self::compile_template(&part_context, &mut part_lexer, output)?;
                         }
 
-                        // For loop: ~{ for item in items } ... ~{ end }
+                        // For loop: {~ for item in items } ... {~ end }
                         "for" => {
                             let item_identifier = args
                                 .first()
@@ -457,7 +457,7 @@ mod tests {
     fn processes_if_template() {
         let mut asset = Asset::new(
             "test.html".into(),
-            r#"~{if is_empty}This is empty!~{end}"#.trim().as_bytes().to_vec(),
+            r#"{~ if is_empty}This is empty!{~ end}"#.trim().as_bytes().to_vec(),
         );
         asset.set_media_type(MediaType::Html);
 
@@ -471,7 +471,7 @@ mod tests {
     fn processes_negated_if_template() {
         let mut asset = Asset::new(
             "test.html".into(),
-            r#"~{if not is_empty}Not empty!~{end}"#.trim().as_bytes().to_vec(),
+            r#"{~ if not is_empty}Not empty!{~ end}"#.trim().as_bytes().to_vec(),
         );
         asset.set_media_type(MediaType::Html);
 
@@ -486,7 +486,7 @@ mod tests {
     fn processes_negated_if_template_when_true() {
         let mut asset = Asset::new(
             "test.html".into(),
-            r#"~{if not is_empty}Not empty!~{end}"#.trim().as_bytes().to_vec(),
+            r#"{~ if not is_empty}Not empty!{~ end}"#.trim().as_bytes().to_vec(),
         );
         asset.set_media_type(MediaType::Html);
 
@@ -501,7 +501,7 @@ mod tests {
     fn processes_negated_if_template_missing_variable() {
         let mut asset = Asset::new(
             "test.html".into(),
-            r#"~{if not missing}Default content~{end}"#.trim().as_bytes().to_vec(),
+            r#"{~ if not missing}Default content{~ end}"#.trim().as_bytes().to_vec(),
         );
         asset.set_media_type(MediaType::Html);
 
@@ -516,7 +516,7 @@ mod tests {
     fn processes_for_template() {
         let mut asset = Asset::new(
             "test.html".into(),
-            r#"Items: [~{for item in items}~{# item}, ~{end}]"#.trim().as_bytes().to_vec(),
+            r#"Items: [{~ for item in items}{~ get item}, {~ end}]"#.trim().as_bytes().to_vec(),
         );
         asset.set_media_type(MediaType::Html);
 
@@ -540,7 +540,7 @@ author = "Test"
 
 ***
 
-<h1>~{# title}</h1>"#;
+<h1>{~ get title}</h1>"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
         TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
@@ -636,7 +636,7 @@ a delimiter in it"#;
 
     #[test]
     fn includes_part() {
-        let content = r#"<html>~{use "_header.html"}<body>Hello</body></html>"#;
+        let content = r#"<html>{~ use "_header.html"}<body>Hello</body></html>"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
 
@@ -658,14 +658,14 @@ a delimiter in it"#;
     #[test]
     fn includes_part_with_frontmatter() {
         // Part frontmatter is available within the part, but not in the parent.
-        let content = r#"<html>~{use "_meta.html"}</html>"#;
+        let content = r#"<html>{~ use "_meta.html"}</html>"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
 
         // Add a part with frontmatter that uses its own variable.
         // Note: content after *** delimiter includes a leading newline.
         let part_key: Text = format!("{}_meta.html", PART_CONTEXT_PREFIX).into();
-        let part_content = "charset = \"utf-8\"\n\n***\n<meta charset=\"~{# charset}\">";
+        let part_content = "charset = \"utf-8\"\n\n***\n<meta charset=\"{~ get charset}\">";
         ctx.insert(part_key, ContextValue::Text(part_content.into()));
 
         TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
@@ -679,7 +679,7 @@ a delimiter in it"#;
 
     #[test]
     fn includes_nested_parts() {
-        let content = r#"~{use "_layout.html"}"#;
+        let content = r#"{~ use "_layout.html"}"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
 
@@ -687,7 +687,7 @@ a delimiter in it"#;
         let layout_key: Text = format!("{}_layout.html", PART_CONTEXT_PREFIX).into();
         ctx.insert(
             layout_key,
-            ContextValue::Text("<html>~{use \"_header.html\"}<body>Content</body></html>".into()),
+            ContextValue::Text("<html>{~ use \"_header.html\"}<body>Content</body></html>".into()),
         );
 
         let header_key: Text = format!("{}_header.html", PART_CONTEXT_PREFIX).into();
@@ -706,7 +706,7 @@ a delimiter in it"#;
 
     #[test]
     fn part_not_found_error() {
-        let content = r#"~{use "_missing.html"}"#;
+        let content = r#"{~ use "_missing.html"}"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
 
@@ -729,7 +729,7 @@ title = "My Page"
         ctx.insert(
             pattern_key,
             ContextValue::Text(
-                "<html><head><title>~{# title}</title></head><body>~{# content}</body></html>"
+                "<html><head><title>{~ get title}</title></head><body>{~ get content}</body></html>"
                     .into(),
             ),
         );
@@ -768,7 +768,7 @@ Content"#;
         let pattern_key: Text = format!("{}_layout.html", PART_CONTEXT_PREFIX).into();
         ctx.insert(
             pattern_key,
-            ContextValue::Text("<html>~{use \"_header.html\"}~{# content}</html>".into()),
+            ContextValue::Text("<html>{~ use \"_header.html\"}{~ get content}</html>".into()),
         );
 
         // Add the part.

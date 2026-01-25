@@ -7,7 +7,7 @@ use crate::proc::ProcessingError;
 #[derive(Logos, Debug, PartialEq, Eq, Clone)]
 pub enum Token {
     /// Opening brace of a template expression.
-    #[token(r#"~{"#, parse_template_expression)]
+    #[token(r#"{~"#, parse_template_expression)]
     OpenTemplate(Result<TemplateExpression, String>),
 }
 
@@ -122,11 +122,11 @@ mod tests {
 
     #[test]
     fn lexes_variables() {
-        let mut lexer = Token::lexer(r#"~{ # super_dup3r_variable }"#);
+        let mut lexer = Token::lexer(r#"{~ get super_dup3r_variable }"#);
         assert_eq!(
             lexer.next(),
             Some(Ok(Token::OpenTemplate(Ok(TemplateExpression::Function {
-                name: "#".into(),
+                name: "get".into(),
                 args: vec![TemplateExpression::Identifier(
                     "super_dup3r_variable".into()
                 )],
@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     fn lexes_function_calls() {
-        let mut lexer = Token::lexer(r#"~{ concat "hello" " " "world" }"#);
+        let mut lexer = Token::lexer(r#"{~ concat "hello" " " "world" }"#);
         assert_eq!(
             lexer.next(),
             Some(Ok(Token::OpenTemplate(Ok(TemplateExpression::Function {
@@ -154,7 +154,7 @@ mod tests {
 
     #[test]
     fn lexes_if_blocks() {
-        let mut lexer = Token::lexer(r#"~{ if is_empty }"#);
+        let mut lexer = Token::lexer(r#"{~ if is_empty }"#);
         assert_eq!(
             lexer.next(),
             Some(Ok(Token::OpenTemplate(Ok(TemplateExpression::Function {
@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn lexes_for_blocks() {
-        let mut lexer = Token::lexer(r#"~{ for item in items }"#);
+        let mut lexer = Token::lexer(r#"{~ for item in items }"#);
         assert_eq!(
             lexer.next(),
             Some(Ok(Token::OpenTemplate(Ok(TemplateExpression::Function {

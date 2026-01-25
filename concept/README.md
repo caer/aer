@@ -90,26 +90,26 @@ title = "Example Page"
 
 #### Template Expressions
 
-Template expressions are wrapped in `~{ }`. The following expressions are supported:
+Template expressions are wrapped in `{~ }`. The following expressions are supported:
 
-- `~{# variable_name}` outputs the value of a variable
-- `~{if condition}...~{end}` renders content if the condition is truthy (non-empty and not `"false"` or `"0"`)
-- `~{if not condition}...~{end}` renders content if the condition is _not_ truthy.
-- `~{for item in items}...~{end}` iterates over a list
-- `~{use "path"}` includes a part by its path (see Asset Writing)
+- `{~ get variable_name}` outputs the value of a variable
+- `{~ if condition}...{~ end}` renders content if the condition is truthy (non-empty and not `"false"` or `"0"`)
+- `{~ if not condition}...{~ end}` renders content if the condition is _not_ truthy.
+- `{~ for item in items}...{~ end}` iterates over a list
+- `{~ use "path"}` includes a part by its path (see Asset Writing)
 
 Example template:
 
 ```html
-<title>~{# title}</title>
-~{use "_header.html"}
-~{if show_greeting}
-    <p>Hello, ~{# name}!</p>
-~{end}
+<title>{~ get title}</title>
+{~ use "_header.html"}
+{~ if show_greeting}
+    <p>Hello, {~ get name}!</p>
+{~ end}
 <ul>
-~{for item in items}
-    <li>~{# item}</li>
-~{end}
+{~ for item in items}
+    <li>{~ get item}</li>
+{~ end}
 </ul>
 ```
 
@@ -198,7 +198,7 @@ successfully processed contents of the asset.
 Assets with a path containing a component starting with `_` (e.g.,
 `_header.html` or `_parts/footer.html`) are _not_ written to
 `paths.target`. Instead, they're cached _without processing_ and made
-available as **Parts**. Parts are included via `~{use "path"}` in the
+available as **Parts**. Parts are included via `{~ use "path"}` in the
 template processor, which extracts any frontmatter from the part
 and inserts the remaining content.
 

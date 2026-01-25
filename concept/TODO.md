@@ -55,7 +55,7 @@
 
 ### Parts System (Template Includes)
 - [x] Cache assets with `_` prefix without writing to target
-- [x] Implement `~{use "path"}` template expression to include parts
+- [x] Implement `{~ use "path"}` template expression to include parts
 - [x] Extract frontmatter from parts when included
 
 ### File Watcher (for `aer serve`)
@@ -108,7 +108,7 @@ Updated TODO to reflect actual implementation state:
 
 **Key gaps identified:**
 
-1. **Parts not implemented**: The `~{use "path"}` template expression is
+1. **Parts not implemented**: The `{~ use "path"}` template expression is
    documented in README.md but not implemented in `template.rs`. Assets
    with `_` prefix are currently written to target like any other asset.
 
@@ -135,7 +135,7 @@ Implemented template includes via the Parts system:
 
 - Assets with `_` prefix in any path component are cached without processing
 - Parts are stored in context with `_part:` prefix (e.g., `_part:_header.html`)
-- `~{use "path"}` expression includes cached parts
+- `{~ use "path"}` expression includes cached parts
 - Frontmatter in parts is extracted and available within the part itself
 - Added `is_part()` helper in `tool/procs.rs`
 - Added `PART_PREFIX` constant and `extract_frontmatter_from_content()` in `template.rs`
