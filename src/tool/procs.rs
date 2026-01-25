@@ -185,7 +185,23 @@ async fn collect_assets(root: &Path, assets: &mut Vec<(String, Vec<u8>)>) -> std
     Ok(())
 }
 
+/// Processors that run during phase one of asset processing.
+const TRANSFORMATION_PROCESSORS: &[&str] = &["template", "markdown", "scss", "js_bundle", "image"];
+
+/// Processors that run in phase two of asset processing.
+const FINALIZATION_PROCESSORS: &[&str] = &["canonicalize", "minify_html", "minify_js"];
+
 /// Processes a single asset through all matching processors.
+///
+/// Asset processing is divided into two phases: Content
+/// transformation, and content finalization.
+///
+/// Transformation processors are run in a loop until the
+/// asset's media type stabilizes. After all transformations,
+/// if a pattern is specified in the context, the content
+/// is wrapped in the pattern and processing continutes recursively.
+///
+/// Finalization processors are run once after all transformations.
 async fn process_asset(
     path: &str,
     content: Vec<u8>,
@@ -196,43 +212,108 @@ async fn process_asset(
     let mut asset = Asset::new(path.into(), content);
     let mut context = context.clone();
 
-    // Track which processors have run to avoid infinite loops.
-    let mut processed_types: Vec<MediaType> = Vec::new();
+    // If canonicalization is enabled, add the asset's canonical
+    // path to the processing context.
+    if let Some(config) = procs.get("canonicalize")
+        && let Some(root) = &config.root
+    {
+        // @caer: fixme: This logic is brittle. We should have some way
+        //        to predict the target path based on the final applicable
+        //        processor.
+        let target_path = if path.ends_with(".md") {
+            path.trim_end_matches(".md").to_string() + ".html"
+        } else {
+            path.to_string()
+        };
+        let canonical_path = format!("{}/{}", root.trim_end_matches('/'), target_path,);
+        context.insert("path".into(), ContextValue::Text(canonical_path.into()));
+    }
 
+    // Check if pattern processing is enabled.
+    let pattern_enabled = procs.contains_key("pattern");
+
+    // Perform phase one of processing (transformation and pattern wrapping).
     loop {
-        let current_type = asset.media_type().clone();
+        // Run transformation processors until media type stabilizes.
+        let mut processed_types: Vec<MediaType> = Vec::new();
+        loop {
+            let current_type = asset.media_type().clone();
 
-        // If we've already processed this type, we're done.
-        if processed_types.contains(&current_type) {
-            break;
+            // If we've already processed this type, we're done.
+            if processed_types.contains(&current_type) {
+                break;
+            }
+            processed_types.push(current_type.clone());
+
+            // Run transformation processors in order.
+            for proc_name in TRANSFORMATION_PROCESSORS {
+                if let Some(config) = procs.get(*proc_name) {
+                    let result = run_processor(proc_name, config, &mut context, &mut asset);
+                    if let Err(e) = result {
+                        tracing::warn!("Processor `{}` failed on {}: {:?}", proc_name, path, e);
+                    }
+                }
+            }
+
+            // If the media type changed, loop again to run processors for the new type.
+            if asset.media_type() == &current_type {
+                break;
+            }
         }
-        processed_types.push(current_type.clone());
 
-        // Run template processor first to extract frontmatter before any content modification.
-        if let Some(config) = procs.get("template") {
-            let result = run_processor("template", config, &mut context, &mut asset);
+        // If pattern processing is enabled and a pattern is specified,
+        // wrap the current content in the pattern and re-process recursively.
+        if pattern_enabled
+            && let Some(ContextValue::Text(pattern_path)) = context.remove(&"pattern".into())
+        {
+            // Store current content in context for pattern to use.
+            let content = asset.as_text().map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "pattern wrapping requires text content",
+                )
+            })?;
+            context.insert("content".into(), ContextValue::Text(content.clone()));
+
+            // Look up the pattern content from parts.
+            let part_key: codas::types::Text =
+                format!("{}{}", PART_CONTEXT_PREFIX, pattern_path).into();
+            let pattern_content = match context.get(&part_key) {
+                Some(ContextValue::Text(content)) => content.clone(),
+                _ => {
+                    tracing::warn!("Pattern not found: {}", pattern_path);
+                    break;
+                }
+            };
+
+            // Determine media type from pattern extension.
+            let pattern_media_type = pattern_path
+                .rsplit('.')
+                .next()
+                .map(MediaType::from_extension)
+                .unwrap_or(MediaType::Html);
+
+            // Create a new asset from the pattern content, preserving
+            // the original asset path.
+            tracing::debug!("Applying pattern {} to {}", pattern_path, path);
+            asset = Asset::new(path.into(), pattern_content.as_bytes().to_vec());
+            asset.set_media_type(pattern_media_type);
+
+            // Continue loop to process the pattern recursively.
+            continue;
+        }
+
+        // No pattern found, exit the loop.
+        break;
+    }
+
+    // Perform phase two of processing (finalization).
+    for proc_name in FINALIZATION_PROCESSORS {
+        if let Some(config) = procs.get(*proc_name) {
+            let result = run_processor(proc_name, config, &mut context, &mut asset);
             if let Err(e) = result {
-                tracing::warn!("Processor `template` failed on {}: {:?}", path, e);
+                tracing::warn!("Processor `{}` failed on {}: {:?}", proc_name, path, e);
             }
-        }
-
-        // Run remaining processors in order.
-        for (name, config) in procs {
-            // Skip the template processor since we already ran it.
-            if name == "template" {
-                continue;
-            }
-
-            let result = run_processor(name, config, &mut context, &mut asset);
-            if let Err(e) = result {
-                tracing::warn!("Processor `{}` failed on {}: {:?}", name, path, e);
-                // Continue with other processors.
-            }
-        }
-
-        // If the media type changed, we need to re-evaluate processors.
-        if asset.media_type() == &current_type {
-            break;
         }
     }
 

@@ -13,9 +13,6 @@ pub const FRONTMATTER_DELIMITER: &str = "***";
 /// Prefix used to store parts in the processing context.
 pub const PART_CONTEXT_PREFIX: &str = "_part:";
 
-/// Context key for storing compiled content when using patterns.
-const CONTENT_KEY: &str = "content";
-
 /// Processes text assets containing template expressions wrapped in
 /// `{~ }`, drawing values from a context of key-value pairs.
 ///
@@ -68,35 +65,7 @@ impl ProcessesAssets for TemplateProcessor {
         let mut lexer = Token::lexer(template);
         let mut output = String::with_capacity(template.len());
         Self::compile_template(context, &mut lexer, &mut output)?;
-
-        // Wrap processed output in a pattern if specified.
-        if let Some(ContextValue::Text(pattern_path)) = context.get(&"pattern".into()).cloned() {
-            // Store compiled output in context.
-            context.insert(CONTENT_KEY.into(), ContextValue::Text(output.into()));
-
-            // Look up the pattern as a part in the context.
-            let pattern_ctx_key: Text = format!("{}{}", PART_CONTEXT_PREFIX, pattern_path).into();
-            let pattern_content = match context.get(&pattern_ctx_key) {
-                Some(ContextValue::Text(content)) => content.clone(),
-                _ => {
-                    return Err(ProcessingError::Compilation {
-                        message: format!("pattern not found: {}", pattern_path).into(),
-                    });
-                }
-            };
-
-            // Extract frontmatter from pattern and merge into context.
-            let pattern_body = Self::extract_frontmatter(context, &pattern_content);
-
-            // Compile the pattern with the updated context.
-            let mut pattern_lexer = Token::lexer(pattern_body);
-            let mut pattern_output = String::with_capacity(pattern_content.len());
-            Self::compile_template(context, &mut pattern_lexer, &mut pattern_output)?;
-
-            asset.replace_with_text(pattern_output.into(), asset.media_type().clone());
-        } else {
-            asset.replace_with_text(output.into(), asset.media_type().clone());
-        }
+        asset.replace_with_text(output.into(), asset.media_type().clone());
 
         Ok(())
     }
@@ -516,7 +485,10 @@ mod tests {
     fn processes_for_template() {
         let mut asset = Asset::new(
             "test.html".into(),
-            r#"Items: [{~ for item in items}{~ get item}, {~ end}]"#.trim().as_bytes().to_vec(),
+            r#"Items: [{~ for item in items}{~ get item}, {~ end}]"#
+                .trim()
+                .as_bytes()
+                .to_vec(),
         );
         asset.set_media_type(MediaType::Html);
 
@@ -712,77 +684,5 @@ a delimiter in it"#;
 
         let result = TemplateProcessor.process(&mut ctx, &mut asset);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn processes_with_pattern() {
-        let content = r#"pattern = "_layout.html"
-title = "My Page"
-
-***
-<p>Hello, world!</p>"#;
-        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
-        let mut ctx = Context::default();
-
-        // Add the pattern as a part to context.
-        let pattern_key: Text = format!("{}_layout.html", PART_CONTEXT_PREFIX).into();
-        ctx.insert(
-            pattern_key,
-            ContextValue::Text(
-                "<html><head><title>{~ get title}</title></head><body>{~ get content}</body></html>"
-                    .into(),
-            ),
-        );
-
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
-
-        assert_eq!(
-            asset.as_text().unwrap(),
-            "<html><head><title>My Page</title></head><body>\n<p>Hello, world!</p></body></html>"
-        );
-    }
-
-    #[test]
-    fn pattern_not_found_error() {
-        let content = r#"pattern = "_missing.html"
-
-***
-Content"#;
-        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
-        let mut ctx = Context::default();
-
-        let result = TemplateProcessor.process(&mut ctx, &mut asset);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn processes_pattern_with_nested_part() {
-        let content = r#"pattern = "_layout.html"
-
-***
-<p>Page content</p>"#;
-        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
-        let mut ctx = Context::default();
-
-        // Add the pattern (which is just a part) with a part reference.
-        let pattern_key: Text = format!("{}_layout.html", PART_CONTEXT_PREFIX).into();
-        ctx.insert(
-            pattern_key,
-            ContextValue::Text("<html>{~ use \"_header.html\"}{~ get content}</html>".into()),
-        );
-
-        // Add the part.
-        let part_key: Text = format!("{}_header.html", PART_CONTEXT_PREFIX).into();
-        ctx.insert(
-            part_key,
-            ContextValue::Text("<header>Header</header>".into()),
-        );
-
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
-
-        assert_eq!(
-            asset.as_text().unwrap(),
-            "<html><header>Header</header>\n<p>Page content</p></html>"
-        );
     }
 }
