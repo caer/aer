@@ -106,6 +106,13 @@ pub async fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::R
         proc_context.insert(key.clone().into(), ContextValue::Text(value.clone().into()));
     }
 
+    // Add the asset source root path to context
+    // for processors that need filesystem access.
+    proc_context.insert(
+        "_asset_source_root".into(),
+        ContextValue::Text(source_path.clone().into()),
+    );
+
     // Separate parts from regular assets and cache them in context.
     let mut regular_assets = Vec::new();
     let mut part_count = 0;
