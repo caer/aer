@@ -234,20 +234,16 @@ impl ProcessesAssets for CanonicalizeProcessor {
     fn process(&self, _context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
         match asset.media_type() {
             MediaType::Html => {
+                tracing::trace!("canonicalize: {}", asset.path());
                 let canonical = self.process_html(asset.as_text()?, asset.path())?;
                 asset.replace_with_text(canonical.into(), MediaType::Html);
             }
             MediaType::Css => {
+                tracing::trace!("canonicalize: {}", asset.path());
                 let canonical = self.process_css(asset.as_text()?, asset.path());
                 asset.replace_with_text(canonical.into(), MediaType::Css);
             }
-            _ => {
-                tracing::debug!(
-                    "skipping asset {}: not HTML or CSS: {}",
-                    asset.path(),
-                    asset.media_type().name()
-                );
-            }
+            _ => {}
         }
         Ok(())
     }

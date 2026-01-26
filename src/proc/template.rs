@@ -52,13 +52,10 @@ pub struct TemplateProcessor;
 impl ProcessesAssets for TemplateProcessor {
     fn process(&self, context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
         if asset.media_type().category() != MediaCategory::Text {
-            tracing::debug!(
-                "skipping asset {}: not text {}",
-                asset.path(),
-                asset.media_type().name()
-            );
             return Ok(());
         }
+
+        tracing::trace!("template: {}", asset.path());
 
         // Extract frontmatter before processing templates.
         let template = Self::extract_frontmatter(context, asset.as_text()?);

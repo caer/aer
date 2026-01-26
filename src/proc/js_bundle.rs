@@ -111,13 +111,10 @@ impl ProcessesAssets for JsBundleProcessor {
     fn process(&self, _context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
         // Skip assets that aren't JavaScript.
         if *asset.media_type() != MediaType::JavaScript {
-            tracing::debug!(
-                "skipping asset {}: not JavaScript {}",
-                asset.path(),
-                asset.media_type().name()
-            );
             return Ok(());
         }
+
+        tracing::trace!("js_bundle: {}", asset.path());
 
         // Get the path to the JavaScript entry point.
         let entry_path_str = asset.path().clone();
@@ -128,8 +125,6 @@ impl ProcessesAssets for JsBundleProcessor {
 
         // Update the asset's contents with the bundled code.
         asset.replace_with_text(bundled_code.into(), MediaType::JavaScript);
-
-        tracing::info!("Bundled JavaScript from: {}", entry_path.display());
 
         Ok(())
     }

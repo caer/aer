@@ -14,18 +14,14 @@ pub struct MinifyJsProcessor;
 impl ProcessesAssets for MinifyJsProcessor {
     fn process(&self, _context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
         if asset.media_type() != &MediaType::JavaScript {
-            tracing::debug!(
-                "skipping asset {}: not JavaScript: {}",
-                asset.path(),
-                asset.media_type().name()
-            );
             return Ok(());
         }
 
         if asset.path().ends_with(".min.js") {
-            tracing::debug!("skipping asset {}: already minified", asset.path());
             return Ok(());
         }
+
+        tracing::trace!("minify_js: {}", asset.path());
 
         let source = asset.as_text()?;
 

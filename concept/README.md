@@ -1,8 +1,94 @@
 # Concepts
 
-`aer` is a CLI that enables the entire creative process, with an initial focus on web development.
+`aer` is a toolkit for people who create interactive media,
+with an initial focus on web development.
 
 ## Asset Processing
+
+`aer procs` runs a pipeline of asset processors defined in an `Aer.toml` configuration file.
+Processors transform source assets (like Markdown, SCSS, images, templates) into
+production-ready output with support for profile-based configuration
+(e.g., development vs production settings).
+
+### `aer procs` Command
+
+Accepts an optional `procs_file` path to a TOML configuration file. If not specified,
+looks for `Aer.toml` in the current directory.
+
+#### Configuration
+
+Use `aer init` to create a new `Aer.toml` with the recommended
+default processors in the current directory. Existing files won't
+be overwritten.
+
+Example TOML structure:
+
+```toml
+# Paths to read and write assets from during processing.
+[default.paths]
+source = "site/"
+target = "public/"
+
+# The "context" processor sets values on the
+# global context shared by all processors.
+[default.context]
+title = "Aer Site"
+
+# Asset processors to run in all environments
+[default.procs]
+markdown = {}
+template = {}
+pattern = {}
+canonicalize = { root = "http://localhost:1337/" }
+scss = {}
+minify_html = {}
+minify_js = {}
+image = { max_width = 1920, max_height = 1920 }
+favicon = {}
+
+# Asset processors to run in production.
+[production.procs]
+canonicalize = { root = "https://www.example.com/" }
+```
+
+Every processor specified in the TOML file will be run against
+every compatible asset in `paths.source`, with compatibility
+determined by hard-coded media type support.
+
+If the media type of an asset changes as a result of a given processor
+executing against it, all other processors will be re-evaluated. For example,
+if a `.md` asset is compiled by the `markdown` processor, the `minify_html`
+processor would be run against the resulting compiled `.html`.
+
+#### Asset Writing
+
+For every asset in `paths.source`, the command executes each processor
+in the profile's `procs` with a media type matching the asset. Processed assets
+are written to `paths.target` with the same relative path they have in `paths.source`.
+
+If the processed asset's contents are identical to what already exists
+at the target path, no write is performed.
+
+When a processor fails, other processors will still run against the last
+successfully processed contents of the asset.
+
+Assets with a path containing a component starting with `_` (e.g.,
+`_header.html` or `_parts/footer.html`) are _not_ written to
+`paths.target`. Instead, they're cached _without processing_ and made
+available as **Parts**. Parts are included via `{~ use "path"}` in the
+template processor, which extracts any frontmatter from the part
+and inserts the remaining content.
+
+#### Profiles
+
+Profiles are specified via `-p` or `--profile`. Custom profiles (like
+`[production]`) merge on top of `[default]`.
+
+### `aer serve` Command
+
+Starts a local HTTP server on port `1337` that watches an asset
+path for changes, running the same logic as `aer procs` whenever
+any asset changes.
 
 ### `canonicalize` Processor
 
@@ -52,8 +138,7 @@ output via the `minify` parameter.
 
 ### `markdown` Processor
 
-Compiles Markdown assets to HTML body fragments (no boilerplate), following
-the CommonMark specification.
+Compiles Markdown assets to HTML body fragments, following the CommonMark specification.
 
 ### `minify_html` Processor
 
@@ -63,7 +148,7 @@ Minifies and strips comments from HTML assets.
 
 Minifies and strips comments from JS assets.
 
-Assets with paths ending in `.min.js` will not be minified.
+Assets with target paths ending in `.min.js` will _not_ be minified.
 
 ### `scss` Processor
 
@@ -125,104 +210,6 @@ be set to the path of an existing part (see Asset Writing). If set, the
 processor will save the rendered asset contents onto the processing context
 in the `content` variable, and replace the asset with the rendered contents
 of the part.
-
-### `aer proc` Command
-
-Accepts a `processor` name, an `input` (file, directory, or glob pattern like
-`**/*.scss`), and a `target_path` directory. The processor runs against all
-matching assets, writing results to `target_path`. Directory structure from
-glob patterns is preserved in the target.
-
-Processor options are passed as long CLI arguments:
-
-```sh
-aer proc canonicalize **/*.html public/ --root https://www.example.com/
-aer proc image **/*.png public/ --max-width 800 --max-height 600
-```
-
-### `aer procs` Command
-
-Accepts an optional `procs_file` path to a TOML configuration file.
-If not specified, looks for `Aer.toml` in the current directory.
-
-#### Configuration
-
-Use `aer init` to create a new `Aer.toml` with the recommended
-default processors in the current directory. Existing files won't
-be overwritten.
-
-Example TOML structure:
-
-```toml
-# Paths to read and write assets from during processing.
-[default.paths]
-source = "site/"
-target = "public/"
-
-# The "context" processor sets values on the
-# global context shared by all processors.
-[default.context]
-title = "Aer Site"
-
-# Asset processors to run in all environments
-[default.procs]
-markdown = {}
-template = {}
-canonicalize = { root = "http://localhost:1337/" }
-scss = {}
-js_bundle = { minify = false }
-minify_html = {}
-minify_js = {}
-image = { max_width = 1920, max_height = 1920 }
-
-# Asset processors to run in production.
-[production.procs]
-canonicalize = { root = "https://www.example.com/" }
-js_bundle = { minify = true }
-```
-
-Processors execute in the order they appear in the TOML file. Processor-to-asset
-matching is determined by hardcoded media type support.
-
-If the media type of an asset changes as a result of a given processor
-executing against it, all other processors will be re-evaluated. For example,
-if a `.md` asset is compiled by the `markdown` processor, the `minify_html`
-processor would be run against the resulting compiled `.html`.
-
-#### Asset Writing
-
-For every asset in `paths.source`, the command executes each processor
-in the profile's `procs` with a media type matching the asset. Processed assets
-are written to `paths.target` with the same relative path they have in `paths.source`.
-
-If the processed asset's contents are identical to what already exists at the target path, no write is performed.
-
-When a processor fails, other processors will still run against the last
-successfully processed contents of the asset.
-
-Assets with a path containing a component starting with `_` (e.g.,
-`_header.html` or `_parts/footer.html`) are _not_ written to
-`paths.target`. Instead, they're cached _without processing_ and made
-available as **Parts**. Parts are included via `{~ use "path"}` in the
-template processor, which extracts any frontmatter from the part
-and inserts the remaining content.
-
-#### Profiles
-
-Profiles are specified via `-p` or `--profile`. Custom profiles (like
-`[production]`) merge on top of `[default]`. Paths can vary per profile to
-support diverse deployment environments.
-
-### `aer serve` Command
-
-Starts a local HTTP server on port `1337` that watches an asset
-path for changes, running the same logic as `aer procs` whenever any asset
-changes.
-
-Loads an `Aer.toml` from the current directory. Use `aer init` to create
-a default configuration file if one does not exist.
-
-Profiles are specified the same way as `aer procs` (`-p` or `--profile`).
 
 ## Color Palettes
 

@@ -8,13 +8,10 @@ pub struct MinifyHtmlProcessor;
 impl ProcessesAssets for MinifyHtmlProcessor {
     fn process(&self, _context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
         if asset.media_type() != &MediaType::Html {
-            tracing::debug!(
-                "skipping asset {}: not HTML: {}",
-                asset.path(),
-                asset.media_type().name()
-            );
             return Ok(());
         }
+
+        tracing::trace!("minify_html: {}", asset.path());
 
         let mut bytes = asset.as_bytes().to_vec();
         let cfg = Cfg {

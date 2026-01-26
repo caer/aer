@@ -10,11 +10,6 @@ pub struct FaviconProcessor;
 impl ProcessesAssets for FaviconProcessor {
     fn process(&self, _context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
         if asset.media_type() != &MediaType::Png {
-            tracing::debug!(
-                "skipping asset {}: not a PNG image: {}",
-                asset.path(),
-                asset.media_type().name()
-            );
             return Ok(());
         }
 
@@ -22,9 +17,10 @@ impl ProcessesAssets for FaviconProcessor {
         let path = asset.path();
         let file_name = path.as_str().rsplit('/').next().unwrap_or(path.as_str());
         if file_name != "favicon.png" {
-            tracing::debug!("skipping asset {}: not a favicon.png", asset.path());
             return Ok(());
         }
+
+        tracing::trace!("favicon: {}", asset.path());
 
         // Load the PNG image.
         let image_bytes = asset.as_bytes();
@@ -59,8 +55,6 @@ impl ProcessesAssets for FaviconProcessor {
 
         // Replace asset content with ICO and update media type.
         asset.replace_with_bytes(ico_bytes, MediaType::Ico);
-
-        tracing::debug!("converted {} to ICO format", asset.path());
 
         Ok(())
     }

@@ -17,13 +17,10 @@ pub struct ScssProcessor {}
 impl ProcessesAssets for ScssProcessor {
     fn process(&self, context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
         if *asset.media_type() != MediaType::Scss {
-            tracing::debug!(
-                "skipping asset {}: not SCSS {}",
-                asset.path(),
-                asset.media_type().name()
-            );
             return Ok(());
         }
+
+        tracing::trace!("scss: {}", asset.path());
 
         // Build load paths for import resolution, using the asset's
         // path relative to the source root as the load path.

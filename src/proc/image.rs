@@ -32,16 +32,12 @@ impl ProcessesAssets for ImageResizeProcessor {
     fn process(&self, _context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
         // Skip assets that aren't images.
         if asset.media_type().category() != MediaCategory::Image {
-            tracing::debug!(
-                "skipping asset {}: not an image: {}",
-                asset.path(),
-                asset.media_type().name()
-            );
             return Ok(());
         }
 
         // Extract image bytes.
-        let image_format = ImageFormat::from_path(asset.path().as_str()).map_err(|e| {
+        let asset_path = asset.path().clone();
+        let image_format = ImageFormat::from_path(asset_path.as_str()).map_err(|e| {
             ProcessingError::Malformed {
                 message: e.to_string().into(),
             }
@@ -54,14 +50,10 @@ impl ProcessesAssets for ImageResizeProcessor {
 
         // Skip resizing if the image is already inside the bounding box.
         if image.width() <= self.width && image.height() <= self.height {
-            tracing::debug!(
-                "skipping asset {}: already fits within {}x{}px",
-                asset.path(),
-                self.width,
-                self.height
-            );
             return Ok(());
         }
+
+        tracing::trace!("image: {}", asset_path);
 
         // Resize the image to fit the bounding box.
         let image = image.resize(

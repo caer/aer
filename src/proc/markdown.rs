@@ -14,13 +14,10 @@ pub struct MarkdownProcessor {}
 impl ProcessesAssets for MarkdownProcessor {
     fn process(&self, _context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
         if *asset.media_type() != MediaType::Markdown {
-            tracing::debug!(
-                "skipping asset {}: not markdown {}",
-                asset.path(),
-                asset.media_type().name()
-            );
             return Ok(());
         }
+
+        tracing::trace!("markdown: {}", asset.path());
 
         let text = asset.as_text()?;
 

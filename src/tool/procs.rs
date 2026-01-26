@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use tokio::fs;
 
@@ -131,23 +132,36 @@ pub async fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::R
     }
     tracing::info!("Cached {} parts", part_count);
 
-    // Process each regular asset.
+    // Process assets in parallel.
+    let procs = Arc::new(config.procs);
+    let proc_context = Arc::new(proc_context);
+    let target = Arc::new(target.to_path_buf());
+    let handles: Vec<_> = regular_assets
+        .into_iter()
+        .map(|(relative_path, content)| {
+            let procs = Arc::clone(&procs);
+            let proc_context = Arc::clone(&proc_context);
+            let target = Arc::clone(&target);
+            tokio::spawn(async move {
+                let result =
+                    process_asset(&relative_path, content, &procs, &proc_context, &target).await;
+                (relative_path, result)
+            })
+        })
+        .collect();
+
+    // Wait for all asset processing pipelines to complete.
     let mut success_count = 0;
     let mut error_count = 0;
-    for (relative_path, content) in regular_assets {
-        let result = process_asset(
-            &relative_path,
-            content,
-            &config.procs,
-            &proc_context,
-            target,
-        )
-        .await;
-
-        match result {
-            Ok(()) => success_count += 1,
+    for handle in handles {
+        match handle.await {
+            Ok((_path, Ok(()))) => success_count += 1,
+            Ok((path, Err(e))) => {
+                tracing::error!("Error processing {}: {}", path, e);
+                error_count += 1;
+            }
             Err(e) => {
-                tracing::error!("Error processing {}: {}", relative_path, e);
+                tracing::error!("Task panicked: {}", e);
                 error_count += 1;
             }
         }
@@ -243,6 +257,9 @@ pub async fn process_asset(
     // Check if pattern processing is enabled.
     let pattern_enabled = procs.contains_key("pattern");
 
+    // Track which processors modified the asset.
+    let mut ran_processors: Vec<&str> = Vec::new();
+
     // Perform phase one of processing (transformation and pattern wrapping).
     loop {
         // Run transformation processors until media type stabilizes.
@@ -259,9 +276,12 @@ pub async fn process_asset(
             // Run transformation processors in order.
             for proc_name in TRANSFORMATION_PROCESSORS {
                 if let Some(config) = procs.get(*proc_name) {
-                    let result = run_processor(proc_name, config, &mut context, &mut asset);
+                    let (modified, result) =
+                        run_processor(proc_name, config, &mut context, &mut asset);
                     if let Err(e) = result {
                         tracing::warn!("Processor `{}` failed on {}: {:?}", proc_name, path, e);
+                    } else if modified {
+                        ran_processors.push(proc_name);
                     }
                 }
             }
@@ -306,7 +326,7 @@ pub async fn process_asset(
 
             // Create a new asset from the pattern content, preserving
             // the original asset path.
-            tracing::debug!("Applying pattern {} to {}", pattern_path, path);
+            ran_processors.push("pattern");
             asset = Asset::new(path.into(), pattern_content.as_bytes().to_vec());
             asset.set_media_type(pattern_media_type);
 
@@ -321,9 +341,11 @@ pub async fn process_asset(
     // Perform phase two of processing (finalization).
     for proc_name in FINALIZATION_PROCESSORS {
         if let Some(config) = procs.get(*proc_name) {
-            let result = run_processor(proc_name, config, &mut context, &mut asset);
+            let (modified, result) = run_processor(proc_name, config, &mut context, &mut asset);
             if let Err(e) = result {
                 tracing::warn!("Processor `{}` failed on {}: {:?}", proc_name, path, e);
+            } else if modified {
+                ran_processors.push(proc_name);
             }
         }
     }
@@ -348,19 +370,50 @@ pub async fn process_asset(
         fs::create_dir_all(parent).await?;
     }
     fs::write(&target_path, asset.as_bytes()).await?;
-    tracing::debug!("{} -> {}", path, processed_path);
+
+    // Log processing summary.
+    // Truncate target path if only the filename/extension changed (not the directory).
+    let source_dir = path.rsplit_once('/').map(|(dir, _)| dir);
+    let target_dir = processed_path.rsplit_once('/').map(|(dir, _)| dir);
+    let target_filename = processed_path.rsplit('/').next().unwrap_or(&processed_path);
+
+    let display_target = if source_dir.is_some() && source_dir == target_dir {
+        // Same directory, truncate to /../filename
+        format!("/../{}", target_filename)
+    } else {
+        // Different directory or root-level file, show full path
+        format!("/{}", processed_path)
+    };
+
+    if ran_processors.is_empty() {
+        tracing::debug!("COPY /{} -> {}", path, display_target);
+    } else {
+        tracing::debug!(
+            "PROC /{} -> [{}] -> {}",
+            path,
+            ran_processors.join(", "),
+            display_target
+        );
+    }
 
     Ok(())
 }
 
 /// Runs a single processor against an asset.
+///
+/// Returns `(modified, result)` where `modified` is true if the
+/// processor changed the asset's content or media type.
 pub fn run_processor(
     name: &str,
     config: &ProcessorConfig,
     context: &mut Context,
     asset: &mut Asset,
-) -> Result<(), ProcessingError> {
-    match name {
+) -> (bool, Result<(), ProcessingError>) {
+    // Capture state before processing.
+    let before_type = asset.media_type().clone();
+    let before_len = asset.as_bytes().len();
+
+    let result = match name {
         "markdown" => MarkdownProcessor {}.process(context, asset),
         "template" => TemplateProcessor.process(context, asset),
         "favicon" => FaviconProcessor.process(context, asset),
@@ -390,7 +443,13 @@ pub fn run_processor(
             tracing::warn!("Unknown processor: {}", name);
             Ok(())
         }
-    }
+    };
+
+    // Check if asset was modified.
+    let modified = result.is_ok()
+        && (asset.media_type() != &before_type || asset.as_bytes().len() != before_len);
+
+    (modified, result)
 }
 
 /// Configuration for a single processor.

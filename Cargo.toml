@@ -59,9 +59,17 @@ tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 url = "2.5.8"
 # HTTP server
 axum = "0.8.8"
-tower-http = { version = "0.6.8", features = ["fs"] }
+tower-http = { version = "0.6.8", features = ["fs", "set-header"] }
 # File watching
 notify-debouncer-mini = "0.7.0"
 
 [dev-dependencies]
 test-log = { version = "0.2.18", default-features = false, features = ["trace", "unstable"] }
+
+[profile.release]
+# Optimize for compiled size.
+opt-level = "s"
+# Strip symbols and debug info from the binary.
+strip = true
+# Enable link-time optimization for better inlining across crates.
+lto = true
