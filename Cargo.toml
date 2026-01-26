@@ -57,6 +57,11 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 # URL canonicalization
 url = "2.5.8"
+# HTTP server
+axum = "0.8.8"
+tower-http = { version = "0.6.8", features = ["fs"] }
+# File watching
+notify-debouncer-mini = "0.7.0"
 
 [dev-dependencies]
 test-log = { version = "0.2.18", default-features = false, features = ["trace", "unstable"] }

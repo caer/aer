@@ -24,6 +24,7 @@ async fn main() -> std::io::Result<()> {
             procs_file,
             profile,
         } => aer::tool::procs::run(procs_file.as_deref(), profile.as_deref()).await,
+        Commands::Serve { port, profile } => aer::tool::serve::run(port, profile.as_deref()).await,
     }
 }
 
@@ -53,6 +54,18 @@ enum Commands {
     Procs {
         /// Path to the TOML configuration file (default: Aer.toml)
         procs_file: Option<PathBuf>,
+
+        /// Profile to use (merges with default)
+        #[arg(short, long)]
+        profile: Option<String>,
+    },
+
+    /// Start a development server with file watching that
+    /// runs all asset processors configured in Aer.toml.
+    Serve {
+        /// Port to listen on
+        #[arg(long, default_value = "1337")]
+        port: u16,
 
         /// Profile to use (merges with default)
         #[arg(short, long)]

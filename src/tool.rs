@@ -3,6 +3,7 @@
 mod color;
 pub mod palette;
 pub mod procs;
+pub mod serve;
 
 use std::{collections::BTreeMap, path::Path};
 

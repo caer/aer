@@ -28,7 +28,7 @@ use crate::tool::{Config, DEFAULT_CONFIG_FILE, DEFAULT_CONFIG_PROFILE};
 const PART_PATH_PREFIX: &str = "_";
 
 /// Returns true if the path represents a part.
-fn is_part(path: &str) -> bool {
+pub fn is_part(path: &str) -> bool {
     path.split(['/', '\\'])
         .any(|component| component.starts_with(PART_PATH_PREFIX))
 }
@@ -162,7 +162,10 @@ pub async fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::R
 }
 
 /// Collects all assets from the source directory.
-async fn collect_assets(root: &Path, assets: &mut Vec<(String, Vec<u8>)>) -> std::io::Result<()> {
+pub async fn collect_assets(
+    root: &Path,
+    assets: &mut Vec<(String, Vec<u8>)>,
+) -> std::io::Result<()> {
     let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
 
     while let Some(current) = stack.pop() {
@@ -202,7 +205,7 @@ const FINALIZATION_PROCESSORS: &[&str] = &["canonicalize", "minify_html", "minif
 /// is wrapped in the pattern and processing continutes recursively.
 ///
 /// Finalization processors are run once after all transformations.
-async fn process_asset(
+pub async fn process_asset(
     path: &str,
     content: Vec<u8>,
     procs: &BTreeMap<String, ProcessorConfig>,
@@ -343,7 +346,7 @@ async fn process_asset(
 }
 
 /// Runs a single processor against an asset.
-fn run_processor(
+pub fn run_processor(
     name: &str,
     config: &ProcessorConfig,
     context: &mut Context,
