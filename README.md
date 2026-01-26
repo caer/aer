@@ -14,7 +14,7 @@ A command-line toolkit for creatives.
 
 `aer procs` runs a pipeline of asset processors defined in an `Aer.toml` configuration file. Processors transform source assets (Markdown, SCSS, images, templates) into production-ready output with support for profile-based configuration (e.g., development vs production settings).
 
-> [!INFO]
+> [!NOTE]
 > Use `aer init` to create a starter `Aer.toml` in the current directory.
 
 `aer serve` starts a local development server that watches for file changes and automatically rebuilds assets.
