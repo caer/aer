@@ -1,8 +1,8 @@
 use std::path::Path;
 
-use grass::{Options, from_path};
+use grass::{Options, from_string};
 
-use super::{Asset, MediaType, ProcessesAssets, ProcessingError};
+use super::{Asset, Context, ContextValue, MediaType, ProcessesAssets, ProcessingError};
 
 impl From<Box<grass::Error>> for ProcessingError {
     fn from(error: Box<grass::Error>) -> Self {
@@ -11,10 +11,11 @@ impl From<Box<grass::Error>> for ProcessingError {
         }
     }
 }
+
 pub struct ScssProcessor {}
 
 impl ProcessesAssets for ScssProcessor {
-    fn process(&self, asset: &mut Asset) -> Result<(), ProcessingError> {
+    fn process(&self, context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
         if *asset.media_type() != MediaType::Scss {
             tracing::debug!(
                 "skipping asset {}: not SCSS {}",
@@ -24,15 +25,21 @@ impl ProcessesAssets for ScssProcessor {
             return Ok(());
         }
 
-        // Get Path Ref
-        let path_text = asset.path().clone();
-        let path: &str = path_text.as_ref();
+        // Build load paths for import resolution, using the asset's
+        // path relative to the source root as the load path.
+        let mut options = Options::default();
+        if let Some(ContextValue::Text(source)) = context.get(&"_asset_source_root".into()) {
+            let full_path = Path::new(source.as_str()).join(asset.path().as_str());
+            if let Some(parent) = full_path.parent() {
+                options = options.load_path(parent);
+            }
+        }
 
-        // Compile SCSS file at selected path to CSS
-        let css = from_path(Path::new(path), &Options::default())?;
+        // Compile SCSS content to CSS.
+        let css = from_string(asset.as_text()?.to_string(), &options)?;
 
-        // Update the asset's contents and target extension.
-        asset.replace_with_text(css.into(), MediaType::Scss);
+        // Update the asset's contents and media type.
+        asset.replace_with_text(css.into(), MediaType::Css);
 
         Ok(())
     }
@@ -44,26 +51,51 @@ mod tests {
 
     #[test]
     fn processes_scss() {
-        let mut simple_scss_asset =
-            Asset::new("test/simple_example.scss".into(), "".as_bytes().to_vec());
+        let scss = r#"
+$font-stack: Helvetica, sans-serif;
+$primary-color: #333;
 
-        let _ = ScssProcessor {}.process(&mut simple_scss_asset);
+body {
+  font: 100% $font-stack;
+  color: $primary-color;
+}
+"#;
+        let mut asset = Asset::new("styles.scss".into(), scss.as_bytes().to_vec());
+        ScssProcessor {}
+            .process(&mut Context::default(), &mut asset)
+            .unwrap();
 
         assert_eq!(
             "body {\n  font: 100% Helvetica, sans-serif;\n  color: #333;\n}\n",
-            simple_scss_asset.as_text().unwrap()
+            asset.as_text().unwrap()
         );
+    }
 
-        let mut simple_nested_scss_asset = Asset::new(
-            "test/simple_nested_example.scss".into(),
-            "".as_bytes().to_vec(),
-        );
-
-        let _ = ScssProcessor {}.process(&mut simple_nested_scss_asset);
+    #[test]
+    fn processes_nested_scss() {
+        let scss = r#"
+nav {
+  ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  li { display: inline-block; }
+  a {
+    display: block;
+    padding: 6px 12px;
+    text-decoration: none;
+  }
+}
+"#;
+        let mut asset = Asset::new("nav.scss".into(), scss.as_bytes().to_vec());
+        ScssProcessor {}
+            .process(&mut Context::default(), &mut asset)
+            .unwrap();
 
         assert_eq!(
             "nav ul {\n  margin: 0;\n  padding: 0;\n  list-style: none;\n}\nnav li {\n  display: inline-block;\n}\nnav a {\n  display: block;\n  padding: 6px 12px;\n  text-decoration: none;\n}\n",
-            simple_nested_scss_asset.as_text().unwrap()
+            asset.as_text().unwrap()
         );
     }
 }

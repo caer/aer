@@ -10,22 +10,39 @@ A command-line toolkit for creatives.
 > This crate is a work-in-progress toolkit for supporting the entire process of creating static web content, from concept to deployment.
 > The way the tools are organized will likely change in future versions of the crate.
 
+### Asset Processors
+
+`aer procs` runs a pipeline of asset processors defined in an `Aer.toml` configuration file. Processors transform source assets (Markdown, SCSS, images, templates) into production-ready output with support for profile-based configuration (e.g., development vs production settings).
+
+> [!NOTE]
+> Use `aer init` to create a starter `Aer.toml` in the current directory.
+
+`aer serve` starts a local development server that watches for file changes and automatically rebuilds assets.
+
+#### Available Processors
+
+| Processor | Description |
+|-----------|-------------|
+| `template` | Compiles `{~ }` template expressions with TOML frontmatter support |
+| `markdown` | Converts Markdown to HTML (CommonMark) |
+| `scss` | Compiles SCSS to CSS |
+| `js_bundle` | Bundles JavaScript modules via Rolldown |
+| `image` | Resizes images to fit within bounds |
+| `canonicalize` | Converts relative URLs to fully-qualified URLs |
+| `minify_html` | Minifies HTML |
+| `minify_js` | Minifies JavaScript |
+
+See [concept/README.md](concept/README.md) for detailed documentation.
+
 ### Color Palette Picker
 
 ![Picture of the `aer` color palette tool](docs/aer-colors.png)
 
-The default entrypoint (via `cargo run`, or by running `aer` after `cargo install aer`) launches an interactive color palette picker based on [Oklab Colorspace](https://bottosson.github.io/posts/oklab/) relationships.
-
-### Asset Processors
-
-> [!WARNING]
-> While these processors _are_ implemented within the `aer` library, they aren't _currently_ exposed via a command-line interface. Work-in-progress!
-
-In addition to the interactive color picker, the `aer` crate exposes a collection of ["asset processors"](src/proc.rs) which can be assembled into a pipeline for compiling static websites.
+`aer palette` launches an interactive color palette picker based on [Oklab Colorspace](https://bottosson.github.io/posts/oklab/) relationships.
 
 ## License and Contributions 
 
-Copyright © 2025 With Caer, LLC.
+Copyright © 2026 With Caer, LLC.
 
 Licensed under the Functional Source License, Version 1.1, MIT Future License.
 Refer to [the license file](LICENSE.md) for more info.

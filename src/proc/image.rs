@@ -2,7 +2,7 @@ use std::io::Cursor;
 
 use image::ImageFormat;
 
-use super::{Asset, MediaCategory, ProcessesAssets, ProcessingError};
+use super::{Asset, Context, MediaCategory, ProcessesAssets, ProcessingError};
 
 /// Resizes images to fit within a given width and height,
 /// preserving the image's original aspect ratio.
@@ -22,8 +22,14 @@ pub struct ImageResizeProcessor {
     height: u32,
 }
 
+impl ImageResizeProcessor {
+    pub fn new(width: u32, height: u32) -> Self {
+        Self { width, height }
+    }
+}
+
 impl ProcessesAssets for ImageResizeProcessor {
-    fn process(&self, asset: &mut Asset) -> Result<(), ProcessingError> {
+    fn process(&self, _context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
         // Skip assets that aren't images.
         if asset.media_type().category() != MediaCategory::Image {
             tracing::debug!(
@@ -97,7 +103,7 @@ mod tests {
         // Resize the image.
         let (width, height) = (300, 300);
         ImageResizeProcessor { width, height }
-            .process(&mut asset)
+            .process(&mut Context::default(), &mut asset)
             .unwrap();
 
         // Check the dimensions of the resized image.
