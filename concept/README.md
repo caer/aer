@@ -33,6 +33,11 @@ The `src` attribute on `<script>` tags is processed, but URL strings
 within script content are not. Fully-qualified URLs (like `https://localhost`)
 and special URLs (`data:`, `javascript:`, `mailto:`, `#anchor`) are not processed.
 
+### `favicon` Processor
+
+Converts any `favicon.png` file in the root of the
+source directory into an appropriately-sized `favicon.ico`.
+
 ### `image` Processor
 
 Resizes JPG, PNG, or GIF assets to fit within `max_height` and `max_width`

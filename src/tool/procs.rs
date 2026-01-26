@@ -14,6 +14,7 @@ use serde::Deserialize;
 use crate::proc::{
     Asset, Context, ContextValue, MediaType, ProcessesAssets, ProcessingError,
     canonicalize::CanonicalizeProcessor,
+    favicon::FaviconProcessor,
     image::ImageResizeProcessor,
     js_bundle::JsBundleProcessor,
     markdown::MarkdownProcessor,
@@ -189,7 +190,14 @@ pub async fn collect_assets(
 }
 
 /// Processors that run during phase one of asset processing.
-const TRANSFORMATION_PROCESSORS: &[&str] = &["template", "markdown", "scss", "js_bundle", "image"];
+const TRANSFORMATION_PROCESSORS: &[&str] = &[
+    "template",
+    "markdown",
+    "scss",
+    "js_bundle",
+    "image",
+    "favicon",
+];
 
 /// Processors that run in phase two of asset processing.
 const FINALIZATION_PROCESSORS: &[&str] = &["canonicalize", "minify_html", "minify_js"];
@@ -355,6 +363,7 @@ pub fn run_processor(
     match name {
         "markdown" => MarkdownProcessor {}.process(context, asset),
         "template" => TemplateProcessor.process(context, asset),
+        "favicon" => FaviconProcessor.process(context, asset),
         "canonicalize" => {
             let root = config.root.as_deref().unwrap_or("http://localhost/");
             if let Some(processor) = CanonicalizeProcessor::new(root) {

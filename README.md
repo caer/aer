@@ -28,6 +28,7 @@ A command-line toolkit for creatives.
 | `scss` | Compiles SCSS to CSS |
 | `js_bundle` | Bundles JavaScript modules via Rolldown |
 | `image` | Resizes images to fit within bounds |
+| `favicon` | Converts `favicon.png` to `favicon.ico` |
 | `canonicalize` | Converts relative URLs to fully-qualified URLs |
 | `minify_html` | Minifies HTML |
 | `minify_js` | Minifies JavaScript |
