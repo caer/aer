@@ -29,9 +29,9 @@ The following URLs within HTML assets are processed:
 
 - `url()` values in inline `style` attributes.
 
-URLs _within_ `<script>` tags are not processed. Fully-qualified URLs
-(like `https://localhost`) and special URLs (`data:`, `javascript:`,
-`mailto:`, `#anchor`) are not processed.
+The `src` attribute on `<script>` tags is processed, but URL strings
+within script content are not. Fully-qualified URLs (like `https://localhost`)
+and special URLs (`data:`, `javascript:`, `mailto:`, `#anchor`) are not processed.
 
 ### `image` Processor
 
@@ -214,8 +214,8 @@ Starts a local HTTP server on port `1337` that watches an asset
 path for changes, running the same logic as `aer procs` whenever any asset
 changes.
 
-Attempts to load an `Aer.toml` from the current directory to use as a `procs_file`.
-A default TOML with all processors enabled will be created if one does not already exist.
+Loads an `Aer.toml` from the current directory. Use `aer init` to create
+a default configuration file if one does not exist.
 
 Profiles are specified the same way as `aer procs` (`-p` or `--profile`).
 
