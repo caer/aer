@@ -4,6 +4,19 @@
 
 The toolkit for creatives.
 
+## Quickstart
+
+Here's the TL;DR to get going _quick_ with `aer` for web development:
+
+1. `cargo install aer`
+2. `cd` to a path containing assets you want to compile and serve over local HTTP
+3. `aer init`
+4. Configure your source and target ("build") paths in `Aer.toml`
+4. `aer serve`
+5. Check out your assets on [localhost:1337](http://localhost:1337)
+
+Check out [what's here](#whats-here) to see everything else you can do.
+
 ## What's Here
 
 ### Asset Processors
