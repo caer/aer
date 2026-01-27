@@ -32,16 +32,16 @@ title = "Aer Site"
 [default.procs]
 markdown = {}
 template = {}
+pattern = {}
 canonicalize = { root = "http://localhost:1337/" }
 scss = {}
-js_bundle = { minify = false }
 minify_html = {}
 minify_js = {}
 image = { max_width = 1920, max_height = 1920 }
+favicon = {}
 
 [production.procs]
 canonicalize = { root = "https://www.example.com/" }
-js_bundle = { minify = true }
 "#;
 
 /// Global configuration.
