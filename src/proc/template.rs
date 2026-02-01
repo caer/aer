@@ -307,39 +307,86 @@ impl TemplateProcessor {
                             Self::compile_template(&part_context, &mut part_lexer, output)?;
                         }
 
-                        // For loop: {~ for item in items } ... {~ end }
+                        // For loop:
+                        //   {~ for item in collection } ... {~ end }
+                        //   {~ for key, val in table } ... {~ end }
                         "for" => {
-                            let item_identifier = args
+                            let first = args
                                 .first()
                                 .ok_or(ProcessingError::Compilation {
                                     message: "missing item identifier in for loop".into(),
                                 })?
                                 .try_as_identifier()?;
-                            let collection_identifier = args
-                                .get(2)
-                                .ok_or(ProcessingError::Compilation {
-                                    message: "missing collection identifier in for loop".into(),
-                                })?
-                                .try_as_identifier()?;
-                            let collection =
-                                Self::resolve_dotted(context, collection_identifier.as_str());
+
+                            // Detect 4-arg form: key, val, in, table
+                            let is_kv_form = args.len() == 4
+                                && args
+                                    .get(2)
+                                    .and_then(|a| a.try_as_identifier().ok())
+                                    .is_some_and(|id| id == "in");
 
                             let block_span = Self::traverse_template_block(lexer)?;
-                            if let Some(ContextValue::List(items)) = collection
-                                && !items.is_empty()
-                            {
-                                let block_text = &lexer.source()[block_span];
 
-                                for item in items {
-                                    let mut loop_context = context.clone();
-                                    loop_context.insert(item_identifier.clone(), item.clone());
+                            // Table iteration: {~ for key, val in table }
+                            if is_kv_form {
+                                // The tokenizer includes the trailing comma in
+                                // the identifier (e.g. "key,"), so strip it.
+                                let key_identifier: Text =
+                                    first.strip_suffix(',').unwrap_or(&first).into();
+                                let val_identifier = args[1].try_as_identifier()?;
+                                let table_identifier = args[3].try_as_identifier()?;
+                                let resolved = Self::resolve_dotted(context, &table_identifier);
 
-                                    let mut block_lexer = Token::lexer(block_text);
-                                    Self::compile_template(
-                                        &loop_context,
-                                        &mut block_lexer,
-                                        output,
-                                    )?;
+                                if let Some(ContextValue::Table(table)) = resolved
+                                    && !table.is_empty()
+                                {
+                                    let block_text = &lexer.source()[block_span];
+
+                                    for (k, v) in table {
+                                        let mut loop_context = context.clone();
+                                        loop_context.insert(
+                                            key_identifier.clone(),
+                                            ContextValue::Text(k.clone()),
+                                        );
+                                        loop_context.insert(val_identifier.clone(), v.clone());
+
+                                        let mut block_lexer = Token::lexer(block_text);
+                                        Self::compile_template(
+                                            &loop_context,
+                                            &mut block_lexer,
+                                            output,
+                                        )?;
+                                    }
+                                }
+
+                            // List iteration: {~ for item in collection }
+                            } else {
+                                let item_identifier = first;
+                                let collection_identifier = args
+                                    .get(2)
+                                    .ok_or(ProcessingError::Compilation {
+                                        message: "missing collection identifier in for loop".into(),
+                                    })?
+                                    .try_as_identifier()?;
+                                let collection =
+                                    Self::resolve_dotted(context, &collection_identifier);
+
+                                if let Some(ContextValue::List(items)) = collection
+                                    && !items.is_empty()
+                                {
+                                    let block_text = &lexer.source()[block_span];
+
+                                    for item in items {
+                                        let mut loop_context = context.clone();
+                                        loop_context.insert(item_identifier.clone(), item.clone());
+
+                                        let mut block_lexer = Token::lexer(block_text);
+                                        Self::compile_template(
+                                            &loop_context,
+                                            &mut block_lexer,
+                                            output,
+                                        )?;
+                                    }
                                 }
                             }
                         }
@@ -972,5 +1019,85 @@ url = "/about"
         // Should render text items directly and non-text items with debug format.
         assert!(result.starts_with("[a, "));
         assert!(result.ends_with(']'));
+    }
+
+    #[test]
+    fn for_kv_iterates_table() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ for key, val in colors}{~ get key}={~ get val} {~ end}"#
+                .as_bytes()
+                .to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut colors = Context::default();
+        colors.insert("blue".into(), ContextValue::Text("#00f".into()));
+        colors.insert("red".into(), ContextValue::Text("#f00".into()));
+
+        let mut ctx: Context = [("colors".into(), ContextValue::Table(colors))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        // BTreeMap iterates alphabetically.
+        assert_eq!(asset.as_text().unwrap(), "blue=#00f red=#f00 ");
+    }
+
+    #[test]
+    fn for_kv_with_table_values() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ for name, info in people}{~ get name}: {~ get info.role}
+{~ end}"#
+                .as_bytes()
+                .to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut alice = Context::default();
+        alice.insert("role".into(), ContextValue::Text("admin".into()));
+        let mut bob = Context::default();
+        bob.insert("role".into(), ContextValue::Text("editor".into()));
+
+        let mut people = Context::default();
+        people.insert("alice".into(), ContextValue::Table(alice));
+        people.insert("bob".into(), ContextValue::Table(bob));
+
+        let mut ctx: Context = [("people".into(), ContextValue::Table(people))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "alice: admin\nbob: editor\n");
+    }
+
+    #[test]
+    fn for_kv_empty_table() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"before{~ for k, v in empty}nope{~ end}after"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx: Context = [("empty".into(), ContextValue::Table(Context::default()))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "beforeafter");
+    }
+
+    #[test]
+    fn for_kv_from_toml_frontmatter() {
+        let content = r#"[env]
+dev = "http://localhost"
+prod = "https://example.com"
+
+***
+{~ for name, url in env}{~ get name}: {~ get url}
+{~ end}"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(
+            asset.as_text().unwrap(),
+            "\ndev: http://localhost\nprod: https://example.com\n"
+        );
     }
 }

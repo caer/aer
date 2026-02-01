@@ -18,7 +18,7 @@ enum TemplateToken {
     /// An identifier starting with a letter or hash,
     /// followed by letters, numbers, underscores,
     /// or periods (for dotted identifiers)
-    #[regex(r"[a-zA-Z#][a-zA-Z0-9_\.]*")]
+    #[regex(r"[a-zA-Z#][a-zA-Z0-9_\.,]*")]
     Identifier,
 
     /// A string literal enclosed in double quotes,
@@ -176,6 +176,24 @@ mod tests {
                     TemplateExpression::Identifier("item".into()),
                     TemplateExpression::Identifier("in".into()),
                     TemplateExpression::Identifier("items".into()),
+                ],
+            }))))
+        );
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn lexes_for_kv_blocks() {
+        let mut lexer = Token::lexer(r#"{~ for key, val in table }"#);
+        assert_eq!(
+            lexer.next(),
+            Some(Ok(Token::OpenTemplate(Ok(TemplateExpression::Function {
+                name: "for".into(),
+                args: vec![
+                    TemplateExpression::Identifier("key,".into()),
+                    TemplateExpression::Identifier("val".into()),
+                    TemplateExpression::Identifier("in".into()),
+                    TemplateExpression::Identifier("table".into()),
                 ],
             }))))
         );

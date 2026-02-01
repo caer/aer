@@ -2,17 +2,6 @@
 
 Planned enhancements, roughly ordered by implementation dependency.
 
-## Table Iteration
-
-Support `{~ for key, val in table}` to iterate key-value pairs.
-
-**Where:**
-- `src/proc/template.rs`, `for` match arm. Detect the 4-arg form
-  (`key`, `val`, `in`, `table`). When the resolved collection is a
-  `ContextValue::Table`, iterate its entries and insert `key` as
-  `Text` and `val` as the entry's `ContextValue`.
-- Iteration order follows `BTreeMap` (alphabetical).
-
 ## Processor Deferral
 
 Allow any processor to signal that it cannot complete until other
