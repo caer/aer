@@ -30,6 +30,12 @@ use crate::tool::{Config, DEFAULT_CONFIG_FILE, DEFAULT_CONFIG_PROFILE};
 /// Path prefix used to identify parts to store in the processing context.
 const PART_PATH_PREFIX: &str = "_";
 
+/// Prefix used to store completed asset metadata in the processing context.
+pub const ASSET_PATH_CONTEXT_KEY_PREFIX: &str = "_assets:";
+
+/// Key used to store the asset source root in the processing context.
+pub const ASSET_SOURCE_ROOT_CONTEXT_KEY: &str = "_asset_source_root";
+
 /// Returns true if the path represents a part.
 pub fn is_part(path: &str) -> bool {
     path.split(['/', '\\'])
@@ -74,16 +80,16 @@ pub async fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::R
     };
 
     // Validate source and target paths.
-    let source_path = config.paths.get("source").ok_or_else(|| {
+    let source_path = config.paths.source.as_ref().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            "missing paths.source in context",
+            "missing paths.source in config",
         )
     })?;
-    let target_path = config.paths.get("target").ok_or_else(|| {
+    let target_path = config.paths.target.as_ref().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            "missing paths.target in context",
+            "missing paths.target in config",
         )
     })?;
 
@@ -91,19 +97,10 @@ pub async fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::R
     tracing::info!("Profile: {}", profile_name);
     tracing::debug!("Processors: {:?}", config.procs.keys().collect::<Vec<_>>());
 
-    // Collect all assets from source directory.
     let source = Path::new(source_path);
     let target = Path::new(target_path);
-    let mut assets = Vec::new();
-    collect_assets(source, &mut assets).await?;
-    tracing::info!("Found {} assets", assets.len());
+    let clean_urls = config.paths.clean_urls.unwrap_or(false);
 
-    // Create target directory if it doesn't exist.
-    if !fs::try_exists(target).await? {
-        fs::create_dir_all(target).await?;
-    }
-
-    // Build processing context from config.
     let mut proc_context = context_from_toml(config.context).map_err(|e| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -111,72 +108,7 @@ pub async fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::R
         )
     })?;
 
-    // Add the asset source root path to context
-    // for processors that need filesystem access.
-    proc_context.insert(
-        "_asset_source_root".into(),
-        ContextValue::Text(source_path.clone().into()),
-    );
-
-    // Separate parts from regular assets and cache them in context.
-    let mut regular_assets = Vec::new();
-    let mut part_count = 0;
-    for (relative_path, content) in assets {
-        if is_part(&relative_path) {
-            // Store part content in context (raw, without processing).
-            let part_key = format!("{}{}", PART_CONTEXT_PREFIX, relative_path);
-            let content_str = String::from_utf8_lossy(&content).to_string();
-            proc_context.insert(part_key.into(), ContextValue::Text(content_str.into()));
-            part_count += 1;
-            tracing::debug!("Cached part: {}", relative_path);
-        } else {
-            regular_assets.push((relative_path, content));
-        }
-    }
-    tracing::info!("Cached {} parts", part_count);
-
-    // Process assets in parallel.
-    let procs = Arc::new(config.procs);
-    let proc_context = Arc::new(proc_context);
-    let target = Arc::new(target.to_path_buf());
-    let handles: Vec<_> = regular_assets
-        .into_iter()
-        .map(|(relative_path, content)| {
-            let procs = Arc::clone(&procs);
-            let proc_context = Arc::clone(&proc_context);
-            let target = Arc::clone(&target);
-            tokio::spawn(async move {
-                let result =
-                    process_asset(&relative_path, content, &procs, &proc_context, &target).await;
-                (relative_path, result)
-            })
-        })
-        .collect();
-
-    // Wait for all asset processing pipelines to complete.
-    let mut success_count = 0;
-    let mut error_count = 0;
-    for handle in handles {
-        match handle.await {
-            Ok((_path, Ok(()))) => success_count += 1,
-            Ok((path, Err(e))) => {
-                tracing::error!("Error processing {}: {}", path, e);
-                error_count += 1;
-            }
-            Err(e) => {
-                tracing::error!("Task panicked: {}", e);
-                error_count += 1;
-            }
-        }
-    }
-
-    tracing::info!(
-        "Processed {} assets ({} errors)",
-        success_count,
-        error_count
-    );
-
-    Ok(())
+    build_assets(source, target, &config.procs, &mut proc_context, clean_urls).await
 }
 
 /// Collects all assets from the source directory.
@@ -202,6 +134,167 @@ pub async fn collect_assets(
             }
         }
     }
+
+    Ok(())
+}
+
+/// Collects, separates, and processes all assets from `source` into `target`.
+///
+/// Parts (files with `_`-prefixed path components) are cached in `context`
+/// and the remaining assets are processed in parallel passes. Assets that
+/// return [ProcessingError::Deferred] are retried with an enriched context
+/// until all complete or a cycle is detected.
+pub async fn build_assets(
+    source: &Path,
+    target: &Path,
+    procs: &BTreeMap<String, ProcessorConfig>,
+    context: &mut Context,
+    clean_urls: bool,
+) -> std::io::Result<()> {
+    // Collect all assets from source directory.
+    let mut assets = Vec::new();
+    collect_assets(source, &mut assets).await?;
+    tracing::info!("Found {} assets", assets.len());
+
+    // Create target directory if it doesn't exist.
+    if !fs::try_exists(target).await? {
+        fs::create_dir_all(target).await?;
+    }
+
+    // Add the asset source root path to context
+    // for processors that need filesystem access.
+    context.insert(
+        ASSET_SOURCE_ROOT_CONTEXT_KEY.into(),
+        ContextValue::Text(source.to_string_lossy().to_string().into()),
+    );
+
+    // Separate parts from regular assets and cache them in context.
+    let mut regular_assets = Vec::new();
+    let mut part_count = 0;
+    for (relative_path, content) in assets {
+        if is_part(&relative_path) {
+            let part_key = format!("{}{}", PART_CONTEXT_PREFIX, relative_path);
+            let content_str = String::from_utf8_lossy(&content).to_string();
+            context.insert(part_key.into(), ContextValue::Text(content_str.into()));
+            part_count += 1;
+            tracing::debug!("Found part: {}", relative_path);
+        } else {
+            regular_assets.push((relative_path, content));
+        }
+    }
+    tracing::info!("Found {} parts", part_count);
+
+    // Seed empty asset lists for every path that contains
+    // regular assets. This lets path queries distinguish "path
+    // exists but nothing has completed yet" (Deferred) from
+    // "path does not exist" (error).
+    for (relative_path, _) in &regular_assets {
+        let dir = relative_path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+        let key: codas::types::Text = format!("{}{}", ASSET_PATH_CONTEXT_KEY_PREFIX, dir).into();
+        context
+            .entry(key)
+            .or_insert_with(|| ContextValue::List(vec![]));
+    }
+
+    // Process assets in parallel passes.
+    let procs = Arc::new(procs.clone());
+    let target = Arc::new(target.to_path_buf());
+    let mut pending_assets = regular_assets;
+    let mut passes_without_progress = 0;
+    let mut success_count = 0;
+    let mut error_count = 0;
+    loop {
+        if pending_assets.is_empty() {
+            break;
+        }
+
+        let prev_pending_assets = pending_assets.len();
+        let shared_context = Arc::new(context.clone());
+        let handles: Vec<_> = pending_assets
+            .iter()
+            .map(|(relative_path, content)| {
+                let procs = Arc::clone(&procs);
+                let ctx = Arc::clone(&shared_context);
+                let target = Arc::clone(&target);
+                let path = relative_path.clone();
+                let content = content.clone();
+                tokio::spawn(async move {
+                    let result =
+                        process_asset(&path, content, &procs, &ctx, &target, clean_urls).await;
+                    (path, result)
+                })
+            })
+            .collect();
+
+        let mut deferred_paths: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
+
+        for handle in handles {
+            match handle.await {
+                Ok((path, Ok(ProcResult::Complete { context: asset_ctx }))) => {
+                    success_count += 1;
+
+                    // Group the completed asset's context by directory
+                    // so that path queries can iterate it.
+                    let dir = path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+                    let key: codas::types::Text =
+                        format!("{}{}", ASSET_PATH_CONTEXT_KEY_PREFIX, dir).into();
+                    match context.get_mut(&key) {
+                        Some(ContextValue::List(items)) => {
+                            items.push(ContextValue::Table(asset_ctx));
+                        }
+                        _ => {
+                            context.insert(
+                                key,
+                                ContextValue::List(vec![ContextValue::Table(asset_ctx)]),
+                            );
+                        }
+                    }
+                }
+                Ok((path, Ok(ProcResult::Deferred))) => {
+                    deferred_paths.insert(path);
+                }
+                Ok((path, Err(e))) => {
+                    tracing::error!("Error processing {}: {}", path, e);
+                    error_count += 1;
+                }
+                Err(e) => {
+                    tracing::error!("Task panicked: {}", e);
+                    error_count += 1;
+                }
+            }
+        }
+
+        pending_assets.retain(|(path, _)| deferred_paths.contains(path));
+
+        if pending_assets.is_empty() {
+            break;
+        }
+
+        // Track consecutive passes where no asset completed.
+        // If N assets are all deferred and none complete
+        // after N passes, they depend on each other cyclically.
+        if pending_assets.len() < prev_pending_assets {
+            passes_without_progress = 0;
+        } else {
+            passes_without_progress += 1;
+        }
+        if passes_without_progress > pending_assets.len() {
+            for (path, _) in &pending_assets {
+                tracing::error!("Asset stuck in deferral cycle: {}", path);
+            }
+            error_count += pending_assets.len();
+            break;
+        }
+
+        tracing::debug!("{} assets deferred, retrying", pending_assets.len());
+    }
+
+    tracing::info!(
+        "Processed {} assets ({} errors)",
+        success_count,
+        error_count
+    );
 
     Ok(())
 }
@@ -236,7 +329,8 @@ pub async fn process_asset(
     procs: &BTreeMap<String, ProcessorConfig>,
     context: &Context,
     target: &Path,
-) -> std::io::Result<()> {
+    clean_urls: bool,
+) -> std::io::Result<ProcResult> {
     let mut asset = Asset::new(path.into(), content);
     let mut context = context.clone();
 
@@ -253,7 +347,15 @@ pub async fn process_asset(
         } else {
             path.to_string()
         };
-        let canonical_path = format!("{}/{}", root.trim_end_matches('/'), target_path,);
+
+        // With clean URLs, canonical paths omit the .html extension.
+        let canonical_target = if clean_urls && target_path.ends_with(".html") {
+            rewrite_clean_url_canonical(&target_path)
+        } else {
+            target_path
+        };
+
+        let canonical_path = format!("{}/{}", root.trim_end_matches('/'), canonical_target);
         context.insert("path".into(), ContextValue::Text(canonical_path.into()));
     }
 
@@ -281,10 +383,17 @@ pub async fn process_asset(
                 if let Some(config) = procs.get(*proc_name) {
                     let (modified, result) =
                         run_processor(proc_name, config, &mut context, &mut asset);
-                    if let Err(e) = result {
-                        tracing::warn!("Processor `{}` failed on {}: {:?}", proc_name, path, e);
-                    } else if modified {
-                        ran_processors.push(proc_name);
+                    match result {
+                        Err(ProcessingError::Deferred) => {
+                            return Ok(ProcResult::Deferred);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Processor `{}` failed on {}: {:?}", proc_name, path, e);
+                        }
+                        Ok(()) if modified => {
+                            ran_processors.push(proc_name);
+                        }
+                        Ok(()) => {}
                     }
                 }
             }
@@ -345,10 +454,17 @@ pub async fn process_asset(
     for proc_name in FINALIZATION_PROCESSORS {
         if let Some(config) = procs.get(*proc_name) {
             let (modified, result) = run_processor(proc_name, config, &mut context, &mut asset);
-            if let Err(e) = result {
-                tracing::warn!("Processor `{}` failed on {}: {:?}", proc_name, path, e);
-            } else if modified {
-                ran_processors.push(proc_name);
+            match result {
+                Err(ProcessingError::Deferred) => {
+                    return Ok(ProcResult::Deferred);
+                }
+                Err(e) => {
+                    tracing::warn!("Processor `{}` failed on {}: {:?}", proc_name, path, e);
+                }
+                Ok(()) if modified => {
+                    ran_processors.push(proc_name);
+                }
+                Ok(()) => {}
             }
         }
     }
@@ -361,11 +477,17 @@ pub async fn process_asset(
         .expect("all media types have at least one extension");
 
     // Replace the existing extension.
-    let processed_path = if let Some(dot_pos) = path.rfind('.') {
+    let mut processed_path = if let Some(dot_pos) = path.rfind('.') {
         format!("{}.{}", &path[..dot_pos], new_extension)
     } else {
         format!("{}.{}", path, new_extension)
     };
+
+    // With clean URLs, rewrite slug.html to slug/index.html.
+    if clean_urls && new_extension == "html" {
+        processed_path = rewrite_clean_url_path(&processed_path);
+    }
+
     let target_path = target.join(&processed_path);
 
     // Write the processed asset to target.
@@ -399,7 +521,7 @@ pub async fn process_asset(
         );
     }
 
-    Ok(())
+    Ok(ProcResult::Complete { context })
 }
 
 /// Runs a single processor against an asset.
@@ -455,6 +577,39 @@ pub fn run_processor(
     (modified, result)
 }
 
+/// Rewrites an HTML output path for clean URLs.
+/// `slug.html` becomes `slug/index.html`; `index.html` is unchanged.
+fn rewrite_clean_url_path(path: &str) -> String {
+    let filename = path.rsplit('/').next().unwrap_or(path);
+    if filename != "index.html" {
+        let stem = &path[..path.len() - ".html".len()];
+        format!("{}/index.html", stem)
+    } else {
+        path.to_string()
+    }
+}
+
+/// Computes the canonical URL suffix for clean URLs.
+/// `slug.html` becomes `slug/`; `index.html` becomes empty;
+/// `dir/index.html` becomes `dir/`.
+fn rewrite_clean_url_canonical(path: &str) -> String {
+    let filename = path.rsplit('/').next().unwrap_or(path);
+    if filename == "index.html" {
+        path[..path.len() - "index.html".len()].to_string()
+    } else {
+        path[..path.len() - ".html".len()].to_string() + "/"
+    }
+}
+
+/// The outcome of processing a single asset.
+pub enum ProcResult {
+    /// The asset was processed successfully.
+    Complete { context: Context },
+
+    /// The asset cannot complete until other assets finish processing.
+    Deferred,
+}
+
 /// Configuration for a single processor.
 #[derive(Debug, Default, Deserialize, Clone)]
 pub struct ProcessorConfig {
@@ -491,6 +646,7 @@ mod tests {
 [default.paths]
 source = "site/"
 target = "public/"
+clean_urls = false
 
 [default.procs]
 canonicalize = { root = "http://localhost/" }
@@ -498,6 +654,7 @@ js_bundle = { minify = false }
 
 [production.paths]
 target = "dist/"
+clean_urls = true
 
 [production.procs]
 canonicalize = { root = "https://prod.example.com/" }
@@ -509,8 +666,9 @@ js_bundle = { minify = true }
         let merged = default_profile.merge(production_profile);
 
         // Paths should be merged (source from default, target from production).
-        assert_eq!(merged.paths.get("source").unwrap(), "site/");
-        assert_eq!(merged.paths.get("target").unwrap(), "dist/");
+        assert_eq!(merged.paths.source.as_deref(), Some("site/"));
+        assert_eq!(merged.paths.target.as_deref(), Some("dist/"));
+        assert_eq!(merged.paths.clean_urls, Some(true));
         // Procs should be merged with production overrides.
         let canonicalize = merged.procs.get("canonicalize").unwrap();
         assert_eq!(
@@ -519,5 +677,32 @@ js_bundle = { minify = true }
         );
         let js_bundle = merged.procs.get("js_bundle").unwrap();
         assert_eq!(js_bundle.minify, Some(true));
+    }
+
+    #[test]
+    fn rewrites_clean_url_paths() {
+        // Non-index HTML files are rewritten.
+        assert_eq!(rewrite_clean_url_path("about.html"), "about/index.html");
+        assert_eq!(
+            rewrite_clean_url_path("blog/post.html"),
+            "blog/post/index.html"
+        );
+
+        // Index files are unchanged.
+        assert_eq!(rewrite_clean_url_path("index.html"), "index.html");
+        assert_eq!(rewrite_clean_url_path("blog/index.html"), "blog/index.html");
+    }
+
+    #[test]
+    fn rewrites_clean_url_canonicals() {
+        // Non-index HTML files get a trailing slash.
+        assert_eq!(rewrite_clean_url_canonical("about.html"), "about/");
+        assert_eq!(rewrite_clean_url_canonical("blog/post.html"), "blog/post/");
+
+        // Root index.html becomes empty (root of site).
+        assert_eq!(rewrite_clean_url_canonical("index.html"), "");
+
+        // Nested index.html becomes directory path.
+        assert_eq!(rewrite_clean_url_canonical("blog/index.html"), "blog/");
     }
 }

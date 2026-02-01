@@ -25,6 +25,9 @@ pub const DEFAULT_CONFIG_TOML: &str = r#"# Aer asset processing configuration
 [default.paths]
 source = "site/"
 target = "public/"
+# If true, `text/html` files will be emitted with clean URLs.
+# For example, "about.html" becomes "about/index.html".
+clean_urls = true
 
 [default.context]
 title = "Aer Site"
@@ -62,7 +65,16 @@ pub struct ConfigProfile {
     #[serde(default)]
     context: toml::Table,
     #[serde(default)]
-    paths: BTreeMap<String, String>,
+    paths: PathsConfig,
+}
+
+/// Path configuration in a [ConfigProfile].
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct PathsConfig {
+    pub source: Option<String>,
+    pub target: Option<String>,
+    #[serde(default)]
+    pub clean_urls: Option<bool>,
 }
 
 impl ConfigProfile {
@@ -72,8 +84,14 @@ impl ConfigProfile {
         let mut merged = self.clone();
 
         // Merge paths
-        for (key, value) in &other.paths {
-            merged.paths.insert(key.clone(), value.clone());
+        if other.paths.source.is_some() {
+            merged.paths.source = other.paths.source.clone();
+        }
+        if other.paths.target.is_some() {
+            merged.paths.target = other.paths.target.clone();
+        }
+        if other.paths.clean_urls.is_some() {
+            merged.paths.clean_urls = other.paths.clean_urls;
         }
 
         // Merge context

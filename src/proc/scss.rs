@@ -2,6 +2,8 @@ use std::path::Path;
 
 use grass::{Options, from_string};
 
+use crate::tool::procs::ASSET_SOURCE_ROOT_CONTEXT_KEY;
+
 use super::{Asset, Context, ContextValue, MediaType, ProcessesAssets, ProcessingError};
 
 impl From<Box<grass::Error>> for ProcessingError {
@@ -25,7 +27,8 @@ impl ProcessesAssets for ScssProcessor {
         // Build load paths for import resolution, using the asset's
         // path relative to the source root as the load path.
         let mut options = Options::default();
-        if let Some(ContextValue::Text(source)) = context.get(&"_asset_source_root".into()) {
+        if let Some(ContextValue::Text(source)) = context.get(&ASSET_SOURCE_ROOT_CONTEXT_KEY.into())
+        {
             let full_path = Path::new(source.as_str()).join(asset.path().as_str());
             if let Some(parent) = full_path.parent() {
                 options = options.load_path(parent);

@@ -25,6 +25,10 @@ enum TemplateToken {
     #[regex(r#""([^"\\]|\\.)*""#)]
     String,
 
+    /// An argument separator.
+    #[token(",")]
+    Separator,
+
     /// Closing brace of a template expression.
     #[token(r#"}"#)]
     CloseTemplate,
@@ -97,6 +101,7 @@ fn parse_template_expression(lexer: &mut Lexer<Token>) -> Result<TemplateExpress
                         .replace(r#"\ "#, r#"\\"#); // restore single backslash
                     args.push(TemplateExpression::String(unescaped.into()));
                 }
+                TemplateToken::Separator => {}
                 TemplateToken::CloseTemplate => {
                     *lexer = template_lexer.morph();
                     break;
@@ -176,6 +181,24 @@ mod tests {
                     TemplateExpression::Identifier("item".into()),
                     TemplateExpression::Identifier("in".into()),
                     TemplateExpression::Identifier("items".into()),
+                ],
+            }))))
+        );
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn lexes_for_kv_blocks() {
+        let mut lexer = Token::lexer(r#"{~ for key, val in table }"#);
+        assert_eq!(
+            lexer.next(),
+            Some(Ok(Token::OpenTemplate(Ok(TemplateExpression::Function {
+                name: "for".into(),
+                args: vec![
+                    TemplateExpression::Identifier("key".into()),
+                    TemplateExpression::Identifier("val".into()),
+                    TemplateExpression::Identifier("in".into()),
+                    TemplateExpression::Identifier("table".into()),
                 ],
             }))))
         );

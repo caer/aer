@@ -9,24 +9,21 @@ use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::mpsc;
 
-use crate::proc::template::PART_CONTEXT_PREFIX;
-use crate::proc::{ContextValue, context_from_toml};
-use crate::tool::procs::{ProcessorConfig, collect_assets, is_part, process_asset};
+use crate::proc::context_from_toml;
+use crate::tool::procs::{ProcessorConfig, build_assets};
 use crate::tool::{Config, ConfigProfile, DEFAULT_CONFIG_FILE, DEFAULT_CONFIG_PROFILE};
-
-use std::collections::BTreeMap;
 
 /// Runs the development server with file watching.
 pub async fn run(port: u16, profile: Option<&str>) -> std::io::Result<()> {
     // Load and merge configuration.
     let config = load_config(profile).await?;
-    let source_path = config.paths.get("source").ok_or_else(|| {
+    let source_path = config.paths.source.as_ref().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "missing paths.source in config",
         )
     })?;
-    let target_path = config.paths.get("target").ok_or_else(|| {
+    let target_path = config.paths.target.as_ref().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "missing paths.target in config",
@@ -36,9 +33,11 @@ pub async fn run(port: u16, profile: Option<&str>) -> std::io::Result<()> {
     let source = Path::new(source_path).to_path_buf();
     let target = Path::new(target_path).to_path_buf();
 
+    let clean_urls = config.paths.clean_urls.unwrap_or(false);
+
     // Run initial build.
     tracing::info!("Running initial build...");
-    build(&source, &target, &config.procs, &config.context).await?;
+    build(&source, &target, &config.procs, &config.context, clean_urls).await?;
 
     // Create channel for rebuild signals.
     let (rebuild_tx, mut rebuild_rx) = mpsc::channel::<()>(1);
@@ -62,7 +61,7 @@ pub async fn run(port: u16, profile: Option<&str>) -> std::io::Result<()> {
     let config = Arc::new(config);
     while rebuild_rx.recv().await.is_some() {
         tracing::info!("Change detected, rebuilding...");
-        match build(&source, &target, &config.procs, &config.context).await {
+        match build(&source, &target, &config.procs, &config.context, clean_urls).await {
             Ok(()) => tracing::info!("Rebuild complete"),
             Err(e) => tracing::error!("Rebuild failed: {}", e),
         }
@@ -111,65 +110,16 @@ async fn load_config(profile: Option<&str>) -> std::io::Result<ConfigProfile> {
 async fn build(
     source: &Path,
     target: &Path,
-    procs: &BTreeMap<String, ProcessorConfig>,
+    procs: &std::collections::BTreeMap<String, ProcessorConfig>,
     context_values: &toml::Table,
+    clean_urls: bool,
 ) -> std::io::Result<()> {
-    // Collect all assets from source directory.
-    let mut assets = Vec::new();
-    collect_assets(source, &mut assets).await?;
-
-    // Create target directory if it doesn't exist.
-    if !fs::try_exists(target).await? {
-        fs::create_dir_all(target).await?;
-    }
-
-    // Build processing context.
-    let mut proc_context = context_from_toml(context_values.clone()).map_err(|e| {
+    let mut context = context_from_toml(context_values.clone()).map_err(|e| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!("invalid context value: {:?}", e),
         )
     })?;
 
-    // Add the asset source root path to context.
-    proc_context.insert(
-        "_asset_source_root".into(),
-        ContextValue::Text(source.to_string_lossy().to_string().into()),
-    );
-
-    // Separate parts from regular assets and cache them in context.
-    let mut regular_assets = Vec::new();
-    for (relative_path, content) in assets {
-        if is_part(&relative_path) {
-            let part_key = format!("{}{}", PART_CONTEXT_PREFIX, relative_path);
-            let content_str = String::from_utf8_lossy(&content).to_string();
-            proc_context.insert(part_key.into(), ContextValue::Text(content_str.into()));
-            tracing::debug!("Cached part: {}", relative_path);
-        } else {
-            regular_assets.push((relative_path, content));
-        }
-    }
-
-    // Process each regular asset.
-    let mut success_count = 0;
-    let mut error_count = 0;
-    for (relative_path, content) in regular_assets {
-        let result = process_asset(&relative_path, content, procs, &proc_context, target).await;
-
-        match result {
-            Ok(()) => success_count += 1,
-            Err(e) => {
-                tracing::error!("Error processing {}: {}", relative_path, e);
-                error_count += 1;
-            }
-        }
-    }
-
-    tracing::info!(
-        "Processed {} assets ({} errors)",
-        success_count,
-        error_count
-    );
-
-    Ok(())
+    build_assets(source, target, procs, &mut context, clean_urls).await
 }

@@ -5,6 +5,7 @@ use crate::proc::{
     Asset, Context, ContextValue, MediaCategory, ProcessesAssets, ProcessingError,
     context_from_toml,
 };
+use crate::tool::procs::ASSET_PATH_CONTEXT_KEY_PREFIX;
 
 mod tokenizer;
 
@@ -161,6 +162,7 @@ impl TemplateProcessor {
                 }))) => {
                     match name.as_str() {
                         // Variable reference: {~ get variable_name }
+                        // Supports fallback chain: {~ get title or name or headline }
                         "get" => {
                             let identifier = args
                                 .first()
@@ -170,27 +172,71 @@ impl TemplateProcessor {
                                 })?
                                 .try_as_identifier()?;
 
-                            let value = match Self::resolve_dotted(context, identifier.as_str()) {
-                                Some(ContextValue::Text(text)) => text.clone(),
-                                Some(ContextValue::List(items)) => {
-                                    let mut items_string = String::from("[");
-                                    for item in items {
-                                        items_string.push_str(item.as_str());
-                                        items_string.push_str(", ");
-                                    }
-                                    if !items.is_empty() {
-                                        items_string.truncate(items_string.len() - 2);
-                                    }
-                                    items_string.push(']');
-                                    items_string.into()
+                            // Collect all identifiers in the fallback chain.
+                            let mut identifiers = vec![identifier];
+                            let mut i = 1;
+                            while i < args.len() {
+                                let keyword = args[i].try_as_identifier()?;
+                                if keyword != "or" {
+                                    return Err(ProcessingError::Compilation {
+                                        message: format!(
+                                            "expected 'or' in get expression, got '{}'",
+                                            keyword
+                                        )
+                                        .into(),
+                                    });
                                 }
-                                _ => format!("{{~ get {} }}", identifier).into(),
-                            };
+                                let next = args.get(i + 1).ok_or(ProcessingError::Compilation {
+                                    message: "missing variable identifier after 'or'".into(),
+                                })?;
+                                identifiers.push(next.try_as_identifier()?);
+                                i += 2;
+                            }
+
+                            // Try each identifier until one resolves.
+                            let mut resolved = None;
+                            for ident in &identifiers {
+                                match Self::resolve_dotted(context, ident) {
+                                    Some(ContextValue::Text(text)) => {
+                                        resolved = Some(text.clone());
+                                        break;
+                                    }
+                                    Some(ContextValue::List(items)) => {
+                                        let mut s = String::from("[");
+                                        for (i, item) in items.iter().enumerate() {
+                                            if i > 0 {
+                                                s.push_str(", ");
+                                            }
+                                            match item {
+                                                ContextValue::Text(t) => s.push_str(t),
+                                                other => {
+                                                    s.push_str(&format!("{:?}", other));
+                                                }
+                                            }
+                                        }
+                                        s.push(']');
+                                        resolved = Some(s.into());
+                                        break;
+                                    }
+                                    _ => continue,
+                                }
+                            }
+
+                            let value = resolved.unwrap_or_else(|| {
+                                let chain = identifiers
+                                    .iter()
+                                    .map(|id| id.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(" or ");
+                                format!("{{~ get {} }}", chain).into()
+                            });
 
                             output.push_str(&value);
                         }
 
-                        // If statement: {~ if [not] condition } ... {~ end }
+                        // If statement:
+                        //   {~ if [not] condition } ... {~ end }
+                        //   {~ if var is [not] value } ... {~ end }
                         "if" => {
                             let first_arg = args
                                 .first()
@@ -199,31 +245,78 @@ impl TemplateProcessor {
                                 })?
                                 .try_as_identifier()?;
 
-                            // Check for negation keyword.
-                            let (negate, identifier) = if first_arg.as_str() == "not" {
-                                let second_arg = args
-                                    .get(1)
-                                    .ok_or(ProcessingError::Compilation {
-                                        message: "missing variable identifier after 'not'".into(),
-                                    })?
-                                    .try_as_identifier()?;
-                                (true, second_arg)
+                            // Detect comparison form: {~ if var is [not] value }
+                            let is_comparison = args
+                                .get(1)
+                                .and_then(|a| a.try_as_identifier().ok())
+                                .is_some_and(|id| id == "is");
+
+                            let should_render = if is_comparison {
+                                let identifier = &first_arg;
+
+                                // Check for "not" after "is".
+                                let (negate, value_index) = if args
+                                    .get(2)
+                                    .and_then(|a| a.try_as_identifier().ok())
+                                    .is_some_and(|id| id == "not")
+                                {
+                                    (true, 3)
+                                } else {
+                                    (false, 2)
+                                };
+
+                                let compare_arg =
+                                    args.get(value_index).ok_or(ProcessingError::Compilation {
+                                        message: "missing value in 'is' comparison".into(),
+                                    })?;
+
+                                // The right-hand side can be a string literal or
+                                // an identifier resolved against the context.
+                                let rhs = match compare_arg {
+                                    TemplateExpression::String(s) => Some(s.clone()),
+                                    TemplateExpression::Identifier(id) => {
+                                        match Self::resolve_dotted(context, id) {
+                                            Some(ContextValue::Text(t)) => Some(t.clone()),
+                                            _ => None,
+                                        }
+                                    }
+                                    _ => None,
+                                };
+
+                                let lhs = match Self::resolve_dotted(context, identifier) {
+                                    Some(ContextValue::Text(t)) => Some(t.clone()),
+                                    _ => None,
+                                };
+
+                                let matches = lhs.is_some() && lhs == rhs;
+                                if negate { !matches } else { matches }
                             } else {
-                                (false, first_arg)
-                            };
+                                // Truthiness form: {~ if [not] condition }
+                                let (negate, identifier) = if first_arg.as_str() == "not" {
+                                    let second_arg = args
+                                        .get(1)
+                                        .ok_or(ProcessingError::Compilation {
+                                            message: "missing variable identifier after 'not'"
+                                                .into(),
+                                        })?
+                                        .try_as_identifier()?;
+                                    (true, second_arg)
+                                } else {
+                                    (false, first_arg)
+                                };
 
-                            // A variable reference is "truthy" if it exists and is not "false" or "0".
-                            let truthy = match Self::resolve_dotted(context, identifier.as_str()) {
-                                Some(ContextValue::Text(text)) => {
-                                    text != "false" && text != "0" && !text.is_empty()
-                                }
-                                Some(ContextValue::List(list)) => !list.is_empty(),
-                                Some(ContextValue::Table(table)) => !table.is_empty(),
-                                None => false,
-                            };
+                                let truthy =
+                                    match Self::resolve_dotted(context, identifier.as_str()) {
+                                        Some(ContextValue::Text(text)) => {
+                                            text != "false" && text != "0" && !text.is_empty()
+                                        }
+                                        Some(ContextValue::List(list)) => !list.is_empty(),
+                                        Some(ContextValue::Table(table)) => !table.is_empty(),
+                                        None => false,
+                                    };
 
-                            // Apply negation if needed.
-                            let should_render = if negate { !truthy } else { truthy };
+                                if negate { !truthy } else { truthy }
+                            };
 
                             // If the condition passes, compile the contents of the block.
                             let block_span: std::ops::Range<usize> =
@@ -235,7 +328,9 @@ impl TemplateProcessor {
                             }
                         }
 
-                        // Use statement: {~ use "path/to/part" }
+                        // Use statement:
+                        //   {~ use "path/to/part" }
+                        //   {~ use "path", with "Value" as key, with var as key2 }
                         "use" => {
                             let path = args
                                 .first()
@@ -259,47 +354,206 @@ impl TemplateProcessor {
                             let mut part_context = context.clone();
                             let body = Self::extract_frontmatter(&mut part_context, part_content);
 
+                            // Parse `with <value> as <key>` clauses.
+                            let mut i = 1;
+                            while i < args.len() {
+                                let keyword = args[i].try_as_identifier()?;
+                                if keyword != "with" {
+                                    return Err(ProcessingError::Compilation {
+                                        message: format!(
+                                            "expected 'with' in use expression, got '{}'",
+                                            keyword
+                                        )
+                                        .into(),
+                                    });
+                                }
+
+                                let value_arg =
+                                    args.get(i + 1).ok_or(ProcessingError::Compilation {
+                                        message: "missing value after 'with' in use expression"
+                                            .into(),
+                                    })?;
+                                let value = match value_arg {
+                                    TemplateExpression::String(s) => ContextValue::Text(s.clone()),
+                                    TemplateExpression::Identifier(id) => {
+                                        match Self::resolve_dotted(context, id) {
+                                            Some(v) => v.clone(),
+                                            None => ContextValue::Text("".into()),
+                                        }
+                                    }
+                                    _ => {
+                                        return Err(ProcessingError::Compilation {
+                                            message: "invalid value in 'with' clause".into(),
+                                        });
+                                    }
+                                };
+
+                                let as_keyword = args
+                                    .get(i + 2)
+                                    .ok_or(ProcessingError::Compilation {
+                                        message: "missing 'as' in 'with' clause".into(),
+                                    })?
+                                    .try_as_identifier()?;
+                                if as_keyword != "as" {
+                                    return Err(ProcessingError::Compilation {
+                                        message: format!(
+                                            "expected 'as' in 'with' clause, got '{}'",
+                                            as_keyword
+                                        )
+                                        .into(),
+                                    });
+                                }
+
+                                let key = args
+                                    .get(i + 3)
+                                    .ok_or(ProcessingError::Compilation {
+                                        message: "missing key after 'as' in 'with' clause".into(),
+                                    })?
+                                    .try_as_identifier()?;
+
+                                part_context.insert(key, value);
+                                i += 4;
+                            }
+
                             // Compile the part content with the merged context.
                             let mut part_lexer = Token::lexer(body);
                             Self::compile_template(&part_context, &mut part_lexer, output)?;
                         }
 
-                        // For loop: {~ for item in items } ... {~ end }
+                        // For loop:
+                        //   {~ for item in collection } ... {~ end }
+                        //   {~ for key, val in table } ... {~ end }
+                        //   {~ for item in assets "path" } ... {~ end }
                         "for" => {
-                            let item_identifier = args
+                            let first = args
                                 .first()
                                 .ok_or(ProcessingError::Compilation {
                                     message: "missing item identifier in for loop".into(),
                                 })?
                                 .try_as_identifier()?;
-                            let collection_identifier = args
-                                .get(2)
-                                .ok_or(ProcessingError::Compilation {
-                                    message: "missing collection identifier in for loop".into(),
-                                })?
-                                .try_as_identifier()?;
-                            let collection =
-                                Self::resolve_dotted(context, collection_identifier.as_str());
+
+                            // Detect 4-arg form: key, val, in, table
+                            let is_kv_form = args.len() == 4
+                                && args
+                                    .get(2)
+                                    .and_then(|a| a.try_as_identifier().ok())
+                                    .is_some_and(|id| id == "in");
+
+                            // Detect assets query form: item, in, assets, "path"
+                            let is_assets_query = !is_kv_form
+                                && args.len() == 4
+                                && args
+                                    .get(1)
+                                    .and_then(|a| a.try_as_identifier().ok())
+                                    .is_some_and(|id| id == "in")
+                                && args
+                                    .get(2)
+                                    .and_then(|a| a.try_as_identifier().ok())
+                                    .is_some_and(|id| id == "assets")
+                                && matches!(args.get(3), Some(TemplateExpression::String(_)));
 
                             let block_span = Self::traverse_template_block(lexer)?;
-                            if let Some(ContextValue::List(items)) = collection
-                                && !items.is_empty()
-                            {
-                                let block_text = &lexer.source()[block_span];
 
-                                for item in items {
-                                    let mut loop_context = context.clone();
-                                    loop_context.insert(
-                                        item_identifier.clone(),
-                                        ContextValue::Text(item.clone()),
-                                    );
+                            // Table iteration: {~ for key, val in table }
+                            if is_kv_form {
+                                let key_identifier = first;
+                                let val_identifier = args[1].try_as_identifier()?;
+                                let table_identifier = args[3].try_as_identifier()?;
+                                let resolved = Self::resolve_dotted(context, &table_identifier);
 
-                                    let mut block_lexer = Token::lexer(block_text);
-                                    Self::compile_template(
-                                        &loop_context,
-                                        &mut block_lexer,
-                                        output,
-                                    )?;
+                                if let Some(ContextValue::Table(table)) = resolved
+                                    && !table.is_empty()
+                                {
+                                    let block_text = &lexer.source()[block_span];
+
+                                    for (k, v) in table {
+                                        let mut loop_context = context.clone();
+                                        loop_context.insert(
+                                            key_identifier.clone(),
+                                            ContextValue::Text(k.clone()),
+                                        );
+                                        loop_context.insert(val_identifier.clone(), v.clone());
+
+                                        let mut block_lexer = Token::lexer(block_text);
+                                        Self::compile_template(
+                                            &loop_context,
+                                            &mut block_lexer,
+                                            output,
+                                        )?;
+                                    }
+                                }
+
+                            // Path query: {~ for item in assets "path" }
+                            } else if is_assets_query {
+                                let item_identifier = first;
+                                let dir_path = args[3].try_as_string()?;
+                                let assets_key: Text =
+                                    format!("{}{}", ASSET_PATH_CONTEXT_KEY_PREFIX, dir_path).into();
+
+                                match context.get(&assets_key) {
+                                    // Assets have completed — iterate them.
+                                    Some(ContextValue::List(items)) if !items.is_empty() => {
+                                        let block_text = &lexer.source()[block_span];
+
+                                        for item in items {
+                                            let mut loop_context = context.clone();
+                                            loop_context
+                                                .insert(item_identifier.clone(), item.clone());
+
+                                            let mut block_lexer = Token::lexer(block_text);
+                                            Self::compile_template(
+                                                &loop_context,
+                                                &mut block_lexer,
+                                                output,
+                                            )?;
+                                        }
+                                    }
+
+                                    // Path exists but no assets have completed yet.
+                                    Some(ContextValue::List(_)) => {
+                                        return Err(ProcessingError::Deferred);
+                                    }
+
+                                    // Path does not exist.
+                                    _ => {
+                                        return Err(ProcessingError::Compilation {
+                                            message: format!(
+                                                "no assets found at path: {}",
+                                                dir_path
+                                            )
+                                            .into(),
+                                        });
+                                    }
+                                }
+
+                            // List iteration: {~ for item in collection }
+                            } else {
+                                let item_identifier = first;
+                                let collection_identifier = args
+                                    .get(2)
+                                    .ok_or(ProcessingError::Compilation {
+                                        message: "missing collection identifier in for loop".into(),
+                                    })?
+                                    .try_as_identifier()?;
+                                let collection =
+                                    Self::resolve_dotted(context, &collection_identifier);
+
+                                if let Some(ContextValue::List(items)) = collection
+                                    && !items.is_empty()
+                                {
+                                    let block_text = &lexer.source()[block_span];
+
+                                    for item in items {
+                                        let mut loop_context = context.clone();
+                                        loop_context.insert(item_identifier.clone(), item.clone());
+
+                                        let mut block_lexer = Token::lexer(block_text);
+                                        Self::compile_template(
+                                            &loop_context,
+                                            &mut block_lexer,
+                                            output,
+                                        )?;
+                                    }
                                 }
                             }
                         }
@@ -404,18 +658,26 @@ mod tests {
 
     use super::*;
 
-    fn get_text(ctx: &Context, key: &str) -> Option<String> {
+    fn get_text(ctx: &Context, key: &str) -> Option<Text> {
         let key: Text = key.into();
         match ctx.get(&key) {
-            Some(ContextValue::Text(t)) => Some(t.to_string()),
+            Some(ContextValue::Text(t)) => Some(t.clone()),
             _ => None,
         }
     }
 
-    fn get_list(ctx: &Context, key: &str) -> Option<Vec<String>> {
+    fn get_list(ctx: &Context, key: &str) -> Option<Vec<Text>> {
         let key: Text = key.into();
         match ctx.get(&key) {
-            Some(ContextValue::List(items)) => Some(items.iter().map(|t| t.to_string()).collect()),
+            Some(ContextValue::List(items)) => Some(
+                items
+                    .iter()
+                    .filter_map(|v| match v {
+                        ContextValue::Text(t) => Some(t.clone()),
+                        _ => None,
+                    })
+                    .collect(),
+            ),
             _ => None,
         }
     }
@@ -492,7 +754,11 @@ mod tests {
 
         let mut ctx: Context = [(
             "items".into(),
-            ContextValue::List(vec!["apple".into(), "banana".into(), "cherry".into()]),
+            ContextValue::List(vec![
+                ContextValue::Text("apple".into()),
+                ContextValue::Text("banana".into()),
+                ContextValue::Text("cherry".into()),
+            ]),
         )]
         .into();
         TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
@@ -515,8 +781,8 @@ author = "Test"
         let mut ctx = Context::default();
         TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
 
-        assert_eq!(get_text(&ctx, "title"), Some("Hello".to_string()));
-        assert_eq!(get_text(&ctx, "author"), Some("Test".to_string()));
+        assert_eq!(get_text(&ctx, "title"), Some("Hello".into()));
+        assert_eq!(get_text(&ctx, "author"), Some("Test".into()));
 
         let body = asset.as_text().unwrap();
         assert!(!body.contains("title ="));
@@ -564,10 +830,10 @@ Body"#;
         let mut ctx = Context::default();
         TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
 
-        assert_eq!(get_text(&ctx, "name"), Some("test".to_string()));
-        assert_eq!(get_text(&ctx, "count"), Some("42".to_string()));
-        assert_eq!(get_text(&ctx, "ratio"), Some("3.14".to_string()));
-        assert_eq!(get_text(&ctx, "enabled"), Some("true".to_string()));
+        assert_eq!(get_text(&ctx, "name"), Some("test".into()));
+        assert_eq!(get_text(&ctx, "count"), Some("42".into()));
+        assert_eq!(get_text(&ctx, "ratio"), Some("3.14".into()));
+        assert_eq!(get_text(&ctx, "enabled"), Some("true".into()));
     }
 
     #[test]
@@ -699,7 +965,11 @@ a delimiter in it"#;
         let mut nested = Context::default();
         nested.insert(
             "items".into(),
-            ContextValue::List(vec!["a".into(), "b".into(), "c".into()]),
+            ContextValue::List(vec![
+                ContextValue::Text("a".into()),
+                ContextValue::Text("b".into()),
+                ContextValue::Text("c".into()),
+            ]),
         );
         let mut ctx: Context = [("data".into(), ContextValue::Table(nested))].into();
         TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
@@ -737,6 +1007,82 @@ a delimiter in it"#;
     }
 
     #[test]
+    fn get_fallback_uses_first_resolved() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ get title or name}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx: Context = [("name".into(), ContextValue::Text("Alice".into()))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "Alice");
+    }
+
+    #[test]
+    fn get_fallback_prefers_first() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ get title or name}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx: Context = [
+            ("title".into(), ContextValue::Text("Hello".into())),
+            ("name".into(), ContextValue::Text("Alice".into())),
+        ]
+        .into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "Hello");
+    }
+
+    #[test]
+    fn get_fallback_chain() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ get a or b or c}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx: Context = [("c".into(), ContextValue::Text("third".into()))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "third");
+    }
+
+    #[test]
+    fn get_fallback_none_resolved() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ get title or name}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx = Context::default();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "{~ get title or name }");
+    }
+
+    #[test]
+    fn get_fallback_with_dotted() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ get page.title or site.name}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut site = Context::default();
+        site.insert("name".into(), ContextValue::Text("My Site".into()));
+        let mut ctx: Context = [("site".into(), ContextValue::Table(site))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "My Site");
+    }
+
+    #[test]
     fn part_not_found_error() {
         let content = r#"{~ use "_missing.html"}"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
@@ -744,5 +1090,482 @@ a delimiter in it"#;
 
         let result = TemplateProcessor.process(&mut ctx, &mut asset);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn use_with_string_param() {
+        let content = r#"{~ use "_greeting.html", with "Hello" as message}"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+
+        let part_key: Text = format!("{}_greeting.html", PART_CONTEXT_PREFIX).into();
+        ctx.insert(
+            part_key,
+            ContextValue::Text("<p>{~ get message}</p>".into()),
+        );
+
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        assert_eq!(asset.as_text().unwrap(), "<p>Hello</p>");
+    }
+
+    #[test]
+    fn use_with_identifier_param() {
+        let content = r#"{~ use "_greeting.html", with author as name}"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+
+        ctx.insert("author".into(), ContextValue::Text("Alice".into()));
+
+        let part_key: Text = format!("{}_greeting.html", PART_CONTEXT_PREFIX).into();
+        ctx.insert(
+            part_key,
+            ContextValue::Text("<p>By {~ get name}</p>".into()),
+        );
+
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        assert_eq!(asset.as_text().unwrap(), "<p>By Alice</p>");
+    }
+
+    #[test]
+    fn use_with_multiple_params() {
+        let content = r#"{~ use "_card.html", with "Welcome" as title, with author as byline}"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+
+        ctx.insert("author".into(), ContextValue::Text("Bob".into()));
+
+        let part_key: Text = format!("{}_card.html", PART_CONTEXT_PREFIX).into();
+        ctx.insert(
+            part_key,
+            ContextValue::Text("<h1>{~ get title}</h1><p>{~ get byline}</p>".into()),
+        );
+
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        assert_eq!(asset.as_text().unwrap(), "<h1>Welcome</h1><p>Bob</p>");
+    }
+
+    #[test]
+    fn use_with_params_no_commas() {
+        let content = r#"{~ use "_card.html" with "Welcome" as title with author as byline}"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+
+        ctx.insert("author".into(), ContextValue::Text("Bob".into()));
+
+        let part_key: Text = format!("{}_card.html", PART_CONTEXT_PREFIX).into();
+        ctx.insert(
+            part_key,
+            ContextValue::Text("<h1>{~ get title}</h1><p>{~ get byline}</p>".into()),
+        );
+
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        assert_eq!(asset.as_text().unwrap(), "<h1>Welcome</h1><p>Bob</p>");
+    }
+
+    #[test]
+    fn use_with_param_overrides_frontmatter() {
+        let content = r#"{~ use "_header.html", with "Override" as title}"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+
+        let part_key: Text = format!("{}_header.html", PART_CONTEXT_PREFIX).into();
+        ctx.insert(
+            part_key,
+            ContextValue::Text("title = \"Default\"\n\n***\n<h1>{~ get title}</h1>".into()),
+        );
+
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        assert_eq!(asset.as_text().unwrap(), "\n<h1>Override</h1>");
+    }
+
+    #[test]
+    fn use_with_dotted_identifier_param() {
+        let content = r#"{~ use "_tag.html", with site.name as label}"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+
+        let mut site = Context::default();
+        site.insert("name".into(), ContextValue::Text("My Site".into()));
+        ctx.insert("site".into(), ContextValue::Table(site));
+
+        let part_key: Text = format!("{}_tag.html", PART_CONTEXT_PREFIX).into();
+        ctx.insert(
+            part_key,
+            ContextValue::Text("<span>{~ get label}</span>".into()),
+        );
+
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        assert_eq!(asset.as_text().unwrap(), "<span>My Site</span>");
+    }
+
+    #[test]
+    fn for_loop_with_table_items() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ for user in users}{~ get user.name}: {~ get user.role}
+{~ end}"#
+                .as_bytes()
+                .to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut alice = Context::default();
+        alice.insert("name".into(), ContextValue::Text("Alice".into()));
+        alice.insert("role".into(), ContextValue::Text("admin".into()));
+        let mut bob = Context::default();
+        bob.insert("name".into(), ContextValue::Text("Bob".into()));
+        bob.insert("role".into(), ContextValue::Text("editor".into()));
+
+        let mut ctx: Context = [(
+            "users".into(),
+            ContextValue::List(vec![ContextValue::Table(alice), ContextValue::Table(bob)]),
+        )]
+        .into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "Alice: admin\nBob: editor\n");
+    }
+
+    #[test]
+    fn for_loop_with_mixed_items() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ for item in items}{~ get item} {~ end}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx: Context = [(
+            "items".into(),
+            ContextValue::List(vec![
+                ContextValue::Text("plain".into()),
+                ContextValue::Text("text".into()),
+            ]),
+        )]
+        .into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "plain text ");
+    }
+
+    #[test]
+    fn arrays_of_tables_from_toml() {
+        let content = r#"[[links]]
+label = "Home"
+url = "/"
+
+[[links]]
+label = "About"
+url = "/about"
+
+***
+{~ for link in links}<a href="{~ get link.url}">{~ get link.label}</a>
+{~ end}"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(
+            asset.as_text().unwrap(),
+            "\n<a href=\"/\">Home</a>\n<a href=\"/about\">About</a>\n"
+        );
+    }
+
+    #[test]
+    fn get_renders_list_of_tables() {
+        let mut asset = Asset::new("test.html".into(), r#"{~ get items}"#.as_bytes().to_vec());
+        asset.set_media_type(MediaType::Html);
+
+        let mut entry = Context::default();
+        entry.insert("name".into(), ContextValue::Text("x".into()));
+
+        let mut ctx: Context = [(
+            "items".into(),
+            ContextValue::List(vec![
+                ContextValue::Text("a".into()),
+                ContextValue::Table(entry),
+            ]),
+        )]
+        .into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        let result = asset.as_text().unwrap();
+        // Should render text items directly and non-text items with debug format.
+        assert!(result.starts_with("[a, "));
+        assert!(result.ends_with(']'));
+    }
+
+    #[test]
+    fn for_kv_iterates_table() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ for key, val in colors}{~ get key}={~ get val} {~ end}"#
+                .as_bytes()
+                .to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut colors = Context::default();
+        colors.insert("blue".into(), ContextValue::Text("#00f".into()));
+        colors.insert("red".into(), ContextValue::Text("#f00".into()));
+
+        let mut ctx: Context = [("colors".into(), ContextValue::Table(colors))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        // BTreeMap iterates alphabetically.
+        assert_eq!(asset.as_text().unwrap(), "blue=#00f red=#f00 ");
+    }
+
+    #[test]
+    fn for_kv_with_table_values() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ for name, info in people}{~ get name}: {~ get info.role}
+{~ end}"#
+                .as_bytes()
+                .to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut alice = Context::default();
+        alice.insert("role".into(), ContextValue::Text("admin".into()));
+        let mut bob = Context::default();
+        bob.insert("role".into(), ContextValue::Text("editor".into()));
+
+        let mut people = Context::default();
+        people.insert("alice".into(), ContextValue::Table(alice));
+        people.insert("bob".into(), ContextValue::Table(bob));
+
+        let mut ctx: Context = [("people".into(), ContextValue::Table(people))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "alice: admin\nbob: editor\n");
+    }
+
+    #[test]
+    fn for_kv_empty_table() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"before{~ for k, v in empty}nope{~ end}after"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx: Context = [("empty".into(), ContextValue::Table(Context::default()))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "beforeafter");
+    }
+
+    #[test]
+    fn for_kv_from_toml_frontmatter() {
+        let content = r#"[env]
+dev = "http://localhost"
+prod = "https://example.com"
+
+***
+{~ for name, url in env}{~ get name}: {~ get url}
+{~ end}"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(
+            asset.as_text().unwrap(),
+            "\ndev: http://localhost\nprod: https://example.com\n"
+        );
+    }
+
+    #[test]
+    fn if_is_string_match() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ if role is "admin"}yes{~ end}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx: Context = [("role".into(), ContextValue::Text("admin".into()))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "yes");
+    }
+
+    #[test]
+    fn if_is_string_no_match() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ if role is "admin"}yes{~ end}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx: Context = [("role".into(), ContextValue::Text("editor".into()))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "");
+    }
+
+    #[test]
+    fn if_is_not_string() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ if role is not "admin"}restricted{~ end}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx: Context = [("role".into(), ContextValue::Text("editor".into()))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "restricted");
+    }
+
+    #[test]
+    fn if_is_not_string_when_matching() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ if role is not "admin"}restricted{~ end}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx: Context = [("role".into(), ContextValue::Text("admin".into()))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "");
+    }
+
+    #[test]
+    fn if_is_identifier() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ if color is favorite}match{~ end}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx: Context = [
+            ("color".into(), ContextValue::Text("blue".into())),
+            ("favorite".into(), ContextValue::Text("blue".into())),
+        ]
+        .into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "match");
+    }
+
+    #[test]
+    fn if_is_missing_variable() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ if missing is "value"}yes{~ end}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx = Context::default();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "");
+    }
+
+    #[test]
+    fn if_is_not_missing_variable() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ if missing is not "value"}yes{~ end}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx = Context::default();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        // Missing variable is not equal to "value", so `is not` renders.
+        assert_eq!(asset.as_text().unwrap(), "yes");
+    }
+
+    #[test]
+    fn for_assets_query_errors_on_unknown_path() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ for post in assets "blog"}{~ get post.title}{~ end}"#
+                .as_bytes()
+                .to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx = Context::default();
+        let result = TemplateProcessor.process(&mut ctx, &mut asset);
+        assert!(matches!(result, Err(ProcessingError::Compilation { .. })));
+    }
+
+    #[test]
+    fn for_assets_query_defers_when_pending() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ for post in assets "blog"}{~ get post.title}{~ end}"#
+                .as_bytes()
+                .to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        // Empty list means the directory exists but no assets have completed.
+        let mut ctx = Context::default();
+        ctx.insert("_assets:blog".into(), ContextValue::List(vec![]));
+
+        let result = TemplateProcessor.process(&mut ctx, &mut asset);
+        assert_eq!(result, Err(ProcessingError::Deferred));
+    }
+
+    #[test]
+    fn for_assets_query_iterates() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ for post in assets "blog"}{~ get post.title} {~ end}"#
+                .as_bytes()
+                .to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut entry1 = Context::default();
+        entry1.insert("title".into(), ContextValue::Text("hello".into()));
+        let mut entry2 = Context::default();
+        entry2.insert("title".into(), ContextValue::Text("world".into()));
+
+        let mut ctx = Context::default();
+        ctx.insert(
+            "_assets:blog".into(),
+            ContextValue::List(vec![
+                ContextValue::Table(entry1),
+                ContextValue::Table(entry2),
+            ]),
+        );
+
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        assert_eq!(asset.as_text().unwrap(), "hello world ");
+    }
+
+    #[test]
+    fn for_assets_query_accesses_nested_fields() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ for item in assets "posts"}<a href="{~ get item.path}">{~ get item.title}</a>
+{~ end}"#
+                .as_bytes()
+                .to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut entry = Context::default();
+        entry.insert("title".into(), ContextValue::Text("My Post".into()));
+        entry.insert(
+            "path".into(),
+            ContextValue::Text("https://example.com/posts/my-post/".into()),
+        );
+
+        let mut ctx = Context::default();
+        ctx.insert(
+            "_assets:posts".into(),
+            ContextValue::List(vec![ContextValue::Table(entry)]),
+        );
+
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        assert_eq!(
+            asset.as_text().unwrap(),
+            "<a href=\"https://example.com/posts/my-post/\">My Post</a>\n"
+        );
     }
 }
