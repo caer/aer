@@ -35,18 +35,6 @@ with each item's compiled context accessible as fields.
   final processing context.
 - Depends on arrays-of-objects and processor deferral.
 
-## Comparison via `is`
-
-Support `is` and `is not` in `if` expressions:
-`{~ if var is "value"}`, `{~ if var is not "value"}`.
-
-**Where:**
-- `src/proc/template.rs`, `if` match arm. After resolving the left
-  operand, check for an `is` keyword followed by an optional `not` and
-  a string or identifier operand. Compare resolved values as strings.
-- No tokenizer changes needed — `is` and `not` are already valid
-  identifiers.
-
 ## Parameterized Partials
 
 Support injecting values into a part's context via `with...as`:

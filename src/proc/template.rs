@@ -233,7 +233,9 @@ impl TemplateProcessor {
                             output.push_str(&value);
                         }
 
-                        // If statement: {~ if [not] condition } ... {~ end }
+                        // If statement:
+                        //   {~ if [not] condition } ... {~ end }
+                        //   {~ if var is [not] value } ... {~ end }
                         "if" => {
                             let first_arg = args
                                 .first()
@@ -242,31 +244,78 @@ impl TemplateProcessor {
                                 })?
                                 .try_as_identifier()?;
 
-                            // Check for negation keyword.
-                            let (negate, identifier) = if first_arg.as_str() == "not" {
-                                let second_arg = args
-                                    .get(1)
-                                    .ok_or(ProcessingError::Compilation {
-                                        message: "missing variable identifier after 'not'".into(),
-                                    })?
-                                    .try_as_identifier()?;
-                                (true, second_arg)
+                            // Detect comparison form: {~ if var is [not] value }
+                            let is_comparison = args
+                                .get(1)
+                                .and_then(|a| a.try_as_identifier().ok())
+                                .is_some_and(|id| id == "is");
+
+                            let should_render = if is_comparison {
+                                let identifier = &first_arg;
+
+                                // Check for "not" after "is".
+                                let (negate, value_index) = if args
+                                    .get(2)
+                                    .and_then(|a| a.try_as_identifier().ok())
+                                    .is_some_and(|id| id == "not")
+                                {
+                                    (true, 3)
+                                } else {
+                                    (false, 2)
+                                };
+
+                                let compare_arg =
+                                    args.get(value_index).ok_or(ProcessingError::Compilation {
+                                        message: "missing value in 'is' comparison".into(),
+                                    })?;
+
+                                // The right-hand side can be a string literal or
+                                // an identifier resolved against the context.
+                                let rhs = match compare_arg {
+                                    TemplateExpression::String(s) => Some(s.clone()),
+                                    TemplateExpression::Identifier(id) => {
+                                        match Self::resolve_dotted(context, id) {
+                                            Some(ContextValue::Text(t)) => Some(t.clone()),
+                                            _ => None,
+                                        }
+                                    }
+                                    _ => None,
+                                };
+
+                                let lhs = match Self::resolve_dotted(context, identifier) {
+                                    Some(ContextValue::Text(t)) => Some(t.clone()),
+                                    _ => None,
+                                };
+
+                                let matches = lhs.is_some() && lhs == rhs;
+                                if negate { !matches } else { matches }
                             } else {
-                                (false, first_arg)
-                            };
+                                // Truthiness form: {~ if [not] condition }
+                                let (negate, identifier) = if first_arg.as_str() == "not" {
+                                    let second_arg = args
+                                        .get(1)
+                                        .ok_or(ProcessingError::Compilation {
+                                            message: "missing variable identifier after 'not'"
+                                                .into(),
+                                        })?
+                                        .try_as_identifier()?;
+                                    (true, second_arg)
+                                } else {
+                                    (false, first_arg)
+                                };
 
-                            // A variable reference is "truthy" if it exists and is not "false" or "0".
-                            let truthy = match Self::resolve_dotted(context, identifier.as_str()) {
-                                Some(ContextValue::Text(text)) => {
-                                    text != "false" && text != "0" && !text.is_empty()
-                                }
-                                Some(ContextValue::List(list)) => !list.is_empty(),
-                                Some(ContextValue::Table(table)) => !table.is_empty(),
-                                None => false,
-                            };
+                                let truthy =
+                                    match Self::resolve_dotted(context, identifier.as_str()) {
+                                        Some(ContextValue::Text(text)) => {
+                                            text != "false" && text != "0" && !text.is_empty()
+                                        }
+                                        Some(ContextValue::List(list)) => !list.is_empty(),
+                                        Some(ContextValue::Table(table)) => !table.is_empty(),
+                                        None => false,
+                                    };
 
-                            // Apply negation if needed.
-                            let should_render = if negate { !truthy } else { truthy };
+                                if negate { !truthy } else { truthy }
+                            };
 
                             // If the condition passes, compile the contents of the block.
                             let block_span: std::ops::Range<usize> =
@@ -1099,5 +1148,108 @@ prod = "https://example.com"
             asset.as_text().unwrap(),
             "\ndev: http://localhost\nprod: https://example.com\n"
         );
+    }
+
+    #[test]
+    fn if_is_string_match() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ if role is "admin"}yes{~ end}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx: Context = [("role".into(), ContextValue::Text("admin".into()))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "yes");
+    }
+
+    #[test]
+    fn if_is_string_no_match() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ if role is "admin"}yes{~ end}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx: Context = [("role".into(), ContextValue::Text("editor".into()))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "");
+    }
+
+    #[test]
+    fn if_is_not_string() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ if role is not "admin"}restricted{~ end}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx: Context = [("role".into(), ContextValue::Text("editor".into()))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "restricted");
+    }
+
+    #[test]
+    fn if_is_not_string_when_matching() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ if role is not "admin"}restricted{~ end}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx: Context = [("role".into(), ContextValue::Text("admin".into()))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "");
+    }
+
+    #[test]
+    fn if_is_identifier() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ if color is favorite}match{~ end}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx: Context = [
+            ("color".into(), ContextValue::Text("blue".into())),
+            ("favorite".into(), ContextValue::Text("blue".into())),
+        ]
+        .into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "match");
+    }
+
+    #[test]
+    fn if_is_missing_variable() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ if missing is "value"}yes{~ end}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx = Context::default();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "");
+    }
+
+    #[test]
+    fn if_is_not_missing_variable() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ if missing is not "value"}yes{~ end}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx = Context::default();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        // Missing variable is not equal to "value", so `is not` renders.
+        assert_eq!(asset.as_text().unwrap(), "yes");
     }
 }
