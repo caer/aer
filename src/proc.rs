@@ -27,7 +27,7 @@ pub type Context = BTreeMap<Text, ContextValue>;
 #[derive(Debug, Clone)]
 pub enum ContextValue {
     Text(Text),
-    List(Vec<Text>),
+    List(Vec<ContextValue>),
     Table(Context),
 }
 
@@ -49,18 +49,8 @@ impl ContextValue {
             toml::Value::Float(n) => Ok(ContextValue::Text(n.to_string().into())),
             toml::Value::Boolean(b) => Ok(ContextValue::Text(b.to_string().into())),
             toml::Value::Array(arr) => {
-                let items: Result<Vec<Text>, _> = arr
-                    .into_iter()
-                    .map(|v| match v {
-                        toml::Value::String(s) => Ok(s.into()),
-                        toml::Value::Integer(n) => Ok(n.to_string().into()),
-                        toml::Value::Float(n) => Ok(n.to_string().into()),
-                        toml::Value::Boolean(b) => Ok(b.to_string().into()),
-                        _ => Err(ProcessingError::Malformed {
-                            message: "arrays may only contain scalar values".into(),
-                        }),
-                    })
-                    .collect();
+                let items: Result<Vec<ContextValue>, _> =
+                    arr.into_iter().map(ContextValue::from_toml).collect();
                 Ok(ContextValue::List(items?))
             }
             toml::Value::Table(table) => Ok(ContextValue::Table(context_from_toml(table)?)),

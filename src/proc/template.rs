@@ -202,12 +202,16 @@ impl TemplateProcessor {
                                     }
                                     Some(ContextValue::List(items)) => {
                                         let mut s = String::from("[");
-                                        for item in items {
-                                            s.push_str(item);
-                                            s.push_str(", ");
-                                        }
-                                        if !items.is_empty() {
-                                            s.truncate(s.len() - 2);
+                                        for (i, item) in items.iter().enumerate() {
+                                            if i > 0 {
+                                                s.push_str(", ");
+                                            }
+                                            match item {
+                                                ContextValue::Text(t) => s.push_str(t),
+                                                other => {
+                                                    s.push_str(&format!("{:?}", other));
+                                                }
+                                            }
                                         }
                                         s.push(']');
                                         resolved = Some(s.into());
@@ -328,10 +332,7 @@ impl TemplateProcessor {
 
                                 for item in items {
                                     let mut loop_context = context.clone();
-                                    loop_context.insert(
-                                        item_identifier.clone(),
-                                        ContextValue::Text(item.clone()),
-                                    );
+                                    loop_context.insert(item_identifier.clone(), item.clone());
 
                                     let mut block_lexer = Token::lexer(block_text);
                                     Self::compile_template(
@@ -443,18 +444,26 @@ mod tests {
 
     use super::*;
 
-    fn get_text(ctx: &Context, key: &str) -> Option<String> {
+    fn get_text(ctx: &Context, key: &str) -> Option<Text> {
         let key: Text = key.into();
         match ctx.get(&key) {
-            Some(ContextValue::Text(t)) => Some(t.to_string()),
+            Some(ContextValue::Text(t)) => Some(t.clone()),
             _ => None,
         }
     }
 
-    fn get_list(ctx: &Context, key: &str) -> Option<Vec<String>> {
+    fn get_list(ctx: &Context, key: &str) -> Option<Vec<Text>> {
         let key: Text = key.into();
         match ctx.get(&key) {
-            Some(ContextValue::List(items)) => Some(items.iter().map(|t| t.to_string()).collect()),
+            Some(ContextValue::List(items)) => Some(
+                items
+                    .iter()
+                    .filter_map(|v| match v {
+                        ContextValue::Text(t) => Some(t.clone()),
+                        _ => None,
+                    })
+                    .collect(),
+            ),
             _ => None,
         }
     }
@@ -531,7 +540,11 @@ mod tests {
 
         let mut ctx: Context = [(
             "items".into(),
-            ContextValue::List(vec!["apple".into(), "banana".into(), "cherry".into()]),
+            ContextValue::List(vec![
+                ContextValue::Text("apple".into()),
+                ContextValue::Text("banana".into()),
+                ContextValue::Text("cherry".into()),
+            ]),
         )]
         .into();
         TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
@@ -554,8 +567,8 @@ author = "Test"
         let mut ctx = Context::default();
         TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
 
-        assert_eq!(get_text(&ctx, "title"), Some("Hello".to_string()));
-        assert_eq!(get_text(&ctx, "author"), Some("Test".to_string()));
+        assert_eq!(get_text(&ctx, "title"), Some("Hello".into()));
+        assert_eq!(get_text(&ctx, "author"), Some("Test".into()));
 
         let body = asset.as_text().unwrap();
         assert!(!body.contains("title ="));
@@ -603,10 +616,10 @@ Body"#;
         let mut ctx = Context::default();
         TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
 
-        assert_eq!(get_text(&ctx, "name"), Some("test".to_string()));
-        assert_eq!(get_text(&ctx, "count"), Some("42".to_string()));
-        assert_eq!(get_text(&ctx, "ratio"), Some("3.14".to_string()));
-        assert_eq!(get_text(&ctx, "enabled"), Some("true".to_string()));
+        assert_eq!(get_text(&ctx, "name"), Some("test".into()));
+        assert_eq!(get_text(&ctx, "count"), Some("42".into()));
+        assert_eq!(get_text(&ctx, "ratio"), Some("3.14".into()));
+        assert_eq!(get_text(&ctx, "enabled"), Some("true".into()));
     }
 
     #[test]
@@ -738,7 +751,11 @@ a delimiter in it"#;
         let mut nested = Context::default();
         nested.insert(
             "items".into(),
-            ContextValue::List(vec!["a".into(), "b".into(), "c".into()]),
+            ContextValue::List(vec![
+                ContextValue::Text("a".into()),
+                ContextValue::Text("b".into()),
+                ContextValue::Text("c".into()),
+            ]),
         );
         let mut ctx: Context = [("data".into(), ContextValue::Table(nested))].into();
         TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
@@ -859,5 +876,101 @@ a delimiter in it"#;
 
         let result = TemplateProcessor.process(&mut ctx, &mut asset);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn for_loop_with_table_items() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ for user in users}{~ get user.name}: {~ get user.role}
+{~ end}"#
+                .as_bytes()
+                .to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut alice = Context::default();
+        alice.insert("name".into(), ContextValue::Text("Alice".into()));
+        alice.insert("role".into(), ContextValue::Text("admin".into()));
+        let mut bob = Context::default();
+        bob.insert("name".into(), ContextValue::Text("Bob".into()));
+        bob.insert("role".into(), ContextValue::Text("editor".into()));
+
+        let mut ctx: Context = [(
+            "users".into(),
+            ContextValue::List(vec![ContextValue::Table(alice), ContextValue::Table(bob)]),
+        )]
+        .into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "Alice: admin\nBob: editor\n");
+    }
+
+    #[test]
+    fn for_loop_with_mixed_items() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ for item in items}{~ get item} {~ end}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx: Context = [(
+            "items".into(),
+            ContextValue::List(vec![
+                ContextValue::Text("plain".into()),
+                ContextValue::Text("text".into()),
+            ]),
+        )]
+        .into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "plain text ");
+    }
+
+    #[test]
+    fn arrays_of_tables_from_toml() {
+        let content = r#"[[links]]
+label = "Home"
+url = "/"
+
+[[links]]
+label = "About"
+url = "/about"
+
+***
+{~ for link in links}<a href="{~ get link.url}">{~ get link.label}</a>
+{~ end}"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(
+            asset.as_text().unwrap(),
+            "\n<a href=\"/\">Home</a>\n<a href=\"/about\">About</a>\n"
+        );
+    }
+
+    #[test]
+    fn get_renders_list_of_tables() {
+        let mut asset = Asset::new("test.html".into(), r#"{~ get items}"#.as_bytes().to_vec());
+        asset.set_media_type(MediaType::Html);
+
+        let mut entry = Context::default();
+        entry.insert("name".into(), ContextValue::Text("x".into()));
+
+        let mut ctx: Context = [(
+            "items".into(),
+            ContextValue::List(vec![
+                ContextValue::Text("a".into()),
+                ContextValue::Table(entry),
+            ]),
+        )]
+        .into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        let result = asset.as_text().unwrap();
+        // Should render text items directly and non-text items with debug format.
+        assert!(result.starts_with("[a, "));
+        assert!(result.ends_with(']'));
     }
 }

@@ -2,20 +2,6 @@
 
 Planned enhancements, roughly ordered by implementation dependency.
 
-## Arrays of Objects
-
-Allow arrays to contain tables, not just scalars.
-
-**Where:**
-- `src/proc.rs`, `ContextValue::List`. Change from `Vec<Text>` to
-  `Vec<ContextValue>`.
-- `src/proc.rs`, `ContextValue::from_toml`. Accept `toml::Value::Table`
-  inside arrays.
-- `src/proc/template.rs`, `for` loop. Insert each item as its actual
-  `ContextValue` variant (not always `Text`).
-- `src/proc/template.rs`, `get` handler for lists. Handle non-text items
-  when rendering a list directly.
-
 ## Table Iteration
 
 Support `{~ for key, val in table}` to iterate key-value pairs.
