@@ -5,6 +5,7 @@ use crate::proc::{
     Asset, Context, ContextValue, MediaCategory, ProcessesAssets, ProcessingError,
     context_from_toml,
 };
+use crate::tool::procs::ASSET_PATH_CONTEXT_KEY_PREFIX;
 
 mod tokenizer;
 
@@ -422,6 +423,7 @@ impl TemplateProcessor {
                         // For loop:
                         //   {~ for item in collection } ... {~ end }
                         //   {~ for key, val in table } ... {~ end }
+                        //   {~ for item in assets "path" } ... {~ end }
                         "for" => {
                             let first = args
                                 .first()
@@ -436,6 +438,19 @@ impl TemplateProcessor {
                                     .get(2)
                                     .and_then(|a| a.try_as_identifier().ok())
                                     .is_some_and(|id| id == "in");
+
+                            // Detect assets query form: item, in, assets, "path"
+                            let is_assets_query = !is_kv_form
+                                && args.len() == 4
+                                && args
+                                    .get(1)
+                                    .and_then(|a| a.try_as_identifier().ok())
+                                    .is_some_and(|id| id == "in")
+                                && args
+                                    .get(2)
+                                    .and_then(|a| a.try_as_identifier().ok())
+                                    .is_some_and(|id| id == "assets")
+                                && matches!(args.get(3), Some(TemplateExpression::String(_)));
 
                             let block_span = Self::traverse_template_block(lexer)?;
 
@@ -465,6 +480,49 @@ impl TemplateProcessor {
                                             &mut block_lexer,
                                             output,
                                         )?;
+                                    }
+                                }
+
+                            // Path query: {~ for item in assets "path" }
+                            } else if is_assets_query {
+                                let item_identifier = first;
+                                let dir_path = args[3].try_as_string()?;
+                                let assets_key: Text =
+                                    format!("{}{}", ASSET_PATH_CONTEXT_KEY_PREFIX, dir_path).into();
+
+                                match context.get(&assets_key) {
+                                    // Assets have completed — iterate them.
+                                    Some(ContextValue::List(items)) if !items.is_empty() => {
+                                        let block_text = &lexer.source()[block_span];
+
+                                        for item in items {
+                                            let mut loop_context = context.clone();
+                                            loop_context
+                                                .insert(item_identifier.clone(), item.clone());
+
+                                            let mut block_lexer = Token::lexer(block_text);
+                                            Self::compile_template(
+                                                &loop_context,
+                                                &mut block_lexer,
+                                                output,
+                                            )?;
+                                        }
+                                    }
+
+                                    // Path exists but no assets have completed yet.
+                                    Some(ContextValue::List(_)) => {
+                                        return Err(ProcessingError::Deferred);
+                                    }
+
+                                    // Path does not exist.
+                                    _ => {
+                                        return Err(ProcessingError::Compilation {
+                                            message: format!(
+                                                "no assets found at path: {}",
+                                                dir_path
+                                            )
+                                            .into(),
+                                        });
                                     }
                                 }
 
@@ -1417,5 +1475,97 @@ prod = "https://example.com"
 
         // Missing variable is not equal to "value", so `is not` renders.
         assert_eq!(asset.as_text().unwrap(), "yes");
+    }
+
+    #[test]
+    fn for_assets_query_errors_on_unknown_path() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ for post in assets "blog"}{~ get post.title}{~ end}"#
+                .as_bytes()
+                .to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx = Context::default();
+        let result = TemplateProcessor.process(&mut ctx, &mut asset);
+        assert!(matches!(result, Err(ProcessingError::Compilation { .. })));
+    }
+
+    #[test]
+    fn for_assets_query_defers_when_pending() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ for post in assets "blog"}{~ get post.title}{~ end}"#
+                .as_bytes()
+                .to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        // Empty list means the directory exists but no assets have completed.
+        let mut ctx = Context::default();
+        ctx.insert("_assets:blog".into(), ContextValue::List(vec![]));
+
+        let result = TemplateProcessor.process(&mut ctx, &mut asset);
+        assert_eq!(result, Err(ProcessingError::Deferred));
+    }
+
+    #[test]
+    fn for_assets_query_iterates() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ for post in assets "blog"}{~ get post.title} {~ end}"#
+                .as_bytes()
+                .to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut entry1 = Context::default();
+        entry1.insert("title".into(), ContextValue::Text("hello".into()));
+        let mut entry2 = Context::default();
+        entry2.insert("title".into(), ContextValue::Text("world".into()));
+
+        let mut ctx = Context::default();
+        ctx.insert(
+            "_assets:blog".into(),
+            ContextValue::List(vec![
+                ContextValue::Table(entry1),
+                ContextValue::Table(entry2),
+            ]),
+        );
+
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        assert_eq!(asset.as_text().unwrap(), "hello world ");
+    }
+
+    #[test]
+    fn for_assets_query_accesses_nested_fields() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ for item in assets "posts"}<a href="{~ get item.path}">{~ get item.title}</a>
+{~ end}"#
+                .as_bytes()
+                .to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut entry = Context::default();
+        entry.insert("title".into(), ContextValue::Text("My Post".into()));
+        entry.insert(
+            "path".into(),
+            ContextValue::Text("https://example.com/posts/my-post/".into()),
+        );
+
+        let mut ctx = Context::default();
+        ctx.insert(
+            "_assets:posts".into(),
+            ContextValue::List(vec![ContextValue::Table(entry)]),
+        );
+
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        assert_eq!(
+            asset.as_text().unwrap(),
+            "<a href=\"https://example.com/posts/my-post/\">My Post</a>\n"
+        );
     }
 }

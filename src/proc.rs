@@ -74,4 +74,8 @@ pub enum ProcessingError {
     /// An error occurred while compiling an asset
     /// via a processor.
     Compilation { message: Text },
+
+    /// The processor cannot complete until other
+    /// assets in the current pass have been processed.
+    Deferred,
 }
