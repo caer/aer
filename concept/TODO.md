@@ -2,15 +2,6 @@
 
 Planned enhancements, roughly ordered by implementation dependency.
 
-## `get` Fallback
-
-Add `or` keyword to `get` expressions: `{~ get title or name}` outputs the
-first resolved variable. Chains of arbitrary length should work.
-
-**Where:** `src/proc/template.rs`, `get` match arm. After resolving the
-first identifier, check for an `or` keyword and try subsequent identifiers
-until one resolves.
-
 ## Clean URLs
 
 Write HTML assets as `slug/index.html` instead of `slug.html` so links

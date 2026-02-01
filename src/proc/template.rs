@@ -161,6 +161,7 @@ impl TemplateProcessor {
                 }))) => {
                     match name.as_str() {
                         // Variable reference: {~ get variable_name }
+                        // Supports fallback chain: {~ get title or name or headline }
                         "get" => {
                             let identifier = args
                                 .first()
@@ -170,22 +171,60 @@ impl TemplateProcessor {
                                 })?
                                 .try_as_identifier()?;
 
-                            let value = match Self::resolve_dotted(context, identifier.as_str()) {
-                                Some(ContextValue::Text(text)) => text.clone(),
-                                Some(ContextValue::List(items)) => {
-                                    let mut items_string = String::from("[");
-                                    for item in items {
-                                        items_string.push_str(item.as_str());
-                                        items_string.push_str(", ");
-                                    }
-                                    if !items.is_empty() {
-                                        items_string.truncate(items_string.len() - 2);
-                                    }
-                                    items_string.push(']');
-                                    items_string.into()
+                            // Collect all identifiers in the fallback chain.
+                            let mut identifiers = vec![identifier];
+                            let mut i = 1;
+                            while i < args.len() {
+                                let keyword = args[i].try_as_identifier()?;
+                                if keyword != "or" {
+                                    return Err(ProcessingError::Compilation {
+                                        message: format!(
+                                            "expected 'or' in get expression, got '{}'",
+                                            keyword
+                                        )
+                                        .into(),
+                                    });
                                 }
-                                _ => format!("{{~ get {} }}", identifier).into(),
-                            };
+                                let next = args.get(i + 1).ok_or(ProcessingError::Compilation {
+                                    message: "missing variable identifier after 'or'".into(),
+                                })?;
+                                identifiers.push(next.try_as_identifier()?);
+                                i += 2;
+                            }
+
+                            // Try each identifier until one resolves.
+                            let mut resolved = None;
+                            for ident in &identifiers {
+                                match Self::resolve_dotted(context, ident) {
+                                    Some(ContextValue::Text(text)) => {
+                                        resolved = Some(text.clone());
+                                        break;
+                                    }
+                                    Some(ContextValue::List(items)) => {
+                                        let mut s = String::from("[");
+                                        for item in items {
+                                            s.push_str(item);
+                                            s.push_str(", ");
+                                        }
+                                        if !items.is_empty() {
+                                            s.truncate(s.len() - 2);
+                                        }
+                                        s.push(']');
+                                        resolved = Some(s.into());
+                                        break;
+                                    }
+                                    _ => continue,
+                                }
+                            }
+
+                            let value = resolved.unwrap_or_else(|| {
+                                let chain = identifiers
+                                    .iter()
+                                    .map(|id| id.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(" or ");
+                                format!("{{~ get {} }}", chain).into()
+                            });
 
                             output.push_str(&value);
                         }
@@ -734,6 +773,82 @@ a delimiter in it"#;
         TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "{~ get user.missing }");
+    }
+
+    #[test]
+    fn get_fallback_uses_first_resolved() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ get title or name}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx: Context = [("name".into(), ContextValue::Text("Alice".into()))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "Alice");
+    }
+
+    #[test]
+    fn get_fallback_prefers_first() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ get title or name}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx: Context = [
+            ("title".into(), ContextValue::Text("Hello".into())),
+            ("name".into(), ContextValue::Text("Alice".into())),
+        ]
+        .into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "Hello");
+    }
+
+    #[test]
+    fn get_fallback_chain() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ get a or b or c}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx: Context = [("c".into(), ContextValue::Text("third".into()))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "third");
+    }
+
+    #[test]
+    fn get_fallback_none_resolved() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ get title or name}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx = Context::default();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "{~ get title or name }");
+    }
+
+    #[test]
+    fn get_fallback_with_dotted() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ get page.title or site.name}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut site = Context::default();
+        site.insert("name".into(), ContextValue::Text("My Site".into()));
+        let mut ctx: Context = [("site".into(), ContextValue::Table(site))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "My Site");
     }
 
     #[test]
