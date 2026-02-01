@@ -84,6 +84,10 @@ available as **Parts**. Parts are included via `{~ use "path"}` in the
 template processor, which extracts any frontmatter from the part
 and inserts the remaining content.
 
+When `clean_urls` is enabled, `text/html` assets other than `index.html`
+are written as `slug/index.html` instead of `slug.html` so that links
+can omit the `.html` file extension.
+
 #### Profiles
 
 Profiles are specified via `-p` or `--profile`. Custom profiles (like
@@ -187,11 +191,20 @@ title = "Example Page"
 
 Template expressions are wrapped in `{~ }`. The following expressions are supported:
 
-- `{~ get variable_name}` outputs the value of a variable
-- `{~ if condition}...{~ end}` renders content if the condition is truthy (non-empty and not `"false"` or `"0"`)
-- `{~ if not condition}...{~ end}` renders content if the condition is _not_ truthy.
-- `{~ for item in items}...{~ end}` iterates over a list
-- `{~ use "path"}` includes a part by its path (see Asset Writing)
+- `{~ get variable_name}` outputs the value of a variable.
+    - An arbitrary number of fallbacks may be specified with `or`: `{~ get title or name or headline}`.
+- `{~ if variable_name}...{~ end}` renders content if the variable is truthy (non-empty and not `"false"` or `"0"`)
+    - `{~ if not variable_name}...{~ end}` renders content if the variable is _not_ truthy.
+- `{~ if variable_name is "value"}...{~ end}` renders content if the variable equals a specific value.
+    - `{~ if variable_name is not "value"}...{~ end}` renders content if the variable doesn't equal a specific value.
+- `{~ for item in items}...{~ end}` iterates over a list of variables.
+    - Each `item` may be a scalar, a table, or another list.
+- `{~ for key, val in table}...{~ end}` iterates over a table's key-value pairs.
+    - Each `key` will be text, but each `val` may be a scalar, a table, or a list.
+- `{~ for item in assets "path"}...{~ end}` iterates over assets in a directory, with each item's compiled context accessible as fields.
+- `{~ use "path"}` includes a part by its path (see Asset Writing).
+    - Values (including variables) can be injected into the part's context using `with`.
+    - This example sets `label` to `"Title"` and `byline` to the value of `author`: `{~ use "path", with "Title" as label, with author as byline}`
 
 Example template:
 
