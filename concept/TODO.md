@@ -35,16 +35,3 @@ with each item's compiled context accessible as fields.
   final processing context.
 - Depends on arrays-of-objects and processor deferral.
 
-## Parameterized Partials
-
-Support injecting values into a part's context via `with...as`:
-`{~ use "path", with "Title" as label, with author as byline}`.
-
-**Where:**
-- `src/proc/template.rs`, `use` match arm. After the path string, parse
-  comma-separated `with <value> as <key>` clauses. The value side may be
-  a quoted string literal or a variable identifier resolved against the
-  current context. Insert each result into the cloned part context before
-  compiling.
-- No tokenizer changes needed — `with`, `as`, and `,` can be matched
-  as identifiers and punctuation the lexer already handles.

@@ -18,12 +18,16 @@ enum TemplateToken {
     /// An identifier starting with a letter or hash,
     /// followed by letters, numbers, underscores,
     /// or periods (for dotted identifiers)
-    #[regex(r"[a-zA-Z#][a-zA-Z0-9_\.,]*")]
+    #[regex(r"[a-zA-Z#][a-zA-Z0-9_\.]*")]
     Identifier,
 
     /// A string literal enclosed in double quotes,
     #[regex(r#""([^"\\]|\\.)*""#)]
     String,
+
+    /// An argument separator.
+    #[token(",")]
+    Separator,
 
     /// Closing brace of a template expression.
     #[token(r#"}"#)]
@@ -97,6 +101,7 @@ fn parse_template_expression(lexer: &mut Lexer<Token>) -> Result<TemplateExpress
                         .replace(r#"\ "#, r#"\\"#); // restore single backslash
                     args.push(TemplateExpression::String(unescaped.into()));
                 }
+                TemplateToken::Separator => {}
                 TemplateToken::CloseTemplate => {
                     *lexer = template_lexer.morph();
                     break;
@@ -190,7 +195,7 @@ mod tests {
             Some(Ok(Token::OpenTemplate(Ok(TemplateExpression::Function {
                 name: "for".into(),
                 args: vec![
-                    TemplateExpression::Identifier("key,".into()),
+                    TemplateExpression::Identifier("key".into()),
                     TemplateExpression::Identifier("val".into()),
                     TemplateExpression::Identifier("in".into()),
                     TemplateExpression::Identifier("table".into()),

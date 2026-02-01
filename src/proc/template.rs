@@ -327,7 +327,9 @@ impl TemplateProcessor {
                             }
                         }
 
-                        // Use statement: {~ use "path/to/part" }
+                        // Use statement:
+                        //   {~ use "path/to/part" }
+                        //   {~ use "path", with "Value" as key, with var as key2 }
                         "use" => {
                             let path = args
                                 .first()
@@ -350,6 +352,67 @@ impl TemplateProcessor {
                             // Extract frontmatter from the part and merge into context.
                             let mut part_context = context.clone();
                             let body = Self::extract_frontmatter(&mut part_context, part_content);
+
+                            // Parse `with <value> as <key>` clauses.
+                            let mut i = 1;
+                            while i < args.len() {
+                                let keyword = args[i].try_as_identifier()?;
+                                if keyword != "with" {
+                                    return Err(ProcessingError::Compilation {
+                                        message: format!(
+                                            "expected 'with' in use expression, got '{}'",
+                                            keyword
+                                        )
+                                        .into(),
+                                    });
+                                }
+
+                                let value_arg =
+                                    args.get(i + 1).ok_or(ProcessingError::Compilation {
+                                        message: "missing value after 'with' in use expression"
+                                            .into(),
+                                    })?;
+                                let value = match value_arg {
+                                    TemplateExpression::String(s) => ContextValue::Text(s.clone()),
+                                    TemplateExpression::Identifier(id) => {
+                                        match Self::resolve_dotted(context, id) {
+                                            Some(v) => v.clone(),
+                                            None => ContextValue::Text("".into()),
+                                        }
+                                    }
+                                    _ => {
+                                        return Err(ProcessingError::Compilation {
+                                            message: "invalid value in 'with' clause".into(),
+                                        });
+                                    }
+                                };
+
+                                let as_keyword = args
+                                    .get(i + 2)
+                                    .ok_or(ProcessingError::Compilation {
+                                        message: "missing 'as' in 'with' clause".into(),
+                                    })?
+                                    .try_as_identifier()?;
+                                if as_keyword != "as" {
+                                    return Err(ProcessingError::Compilation {
+                                        message: format!(
+                                            "expected 'as' in 'with' clause, got '{}'",
+                                            as_keyword
+                                        )
+                                        .into(),
+                                    });
+                                }
+
+                                let key = args
+                                    .get(i + 3)
+                                    .ok_or(ProcessingError::Compilation {
+                                        message: "missing key after 'as' in 'with' clause".into(),
+                                    })?
+                                    .try_as_identifier()?;
+
+                                part_context.insert(key, value);
+                                i += 4;
+                            }
 
                             // Compile the part content with the merged context.
                             let mut part_lexer = Token::lexer(body);
@@ -378,10 +441,7 @@ impl TemplateProcessor {
 
                             // Table iteration: {~ for key, val in table }
                             if is_kv_form {
-                                // The tokenizer includes the trailing comma in
-                                // the identifier (e.g. "key,"), so strip it.
-                                let key_identifier: Text =
-                                    first.strip_suffix(',').unwrap_or(&first).into();
+                                let key_identifier = first;
                                 let val_identifier = args[1].try_as_identifier()?;
                                 let table_identifier = args[3].try_as_identifier()?;
                                 let resolved = Self::resolve_dotted(context, &table_identifier);
@@ -972,6 +1032,112 @@ a delimiter in it"#;
 
         let result = TemplateProcessor.process(&mut ctx, &mut asset);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn use_with_string_param() {
+        let content = r#"{~ use "_greeting.html", with "Hello" as message}"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+
+        let part_key: Text = format!("{}_greeting.html", PART_CONTEXT_PREFIX).into();
+        ctx.insert(
+            part_key,
+            ContextValue::Text("<p>{~ get message}</p>".into()),
+        );
+
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        assert_eq!(asset.as_text().unwrap(), "<p>Hello</p>");
+    }
+
+    #[test]
+    fn use_with_identifier_param() {
+        let content = r#"{~ use "_greeting.html", with author as name}"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+
+        ctx.insert("author".into(), ContextValue::Text("Alice".into()));
+
+        let part_key: Text = format!("{}_greeting.html", PART_CONTEXT_PREFIX).into();
+        ctx.insert(
+            part_key,
+            ContextValue::Text("<p>By {~ get name}</p>".into()),
+        );
+
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        assert_eq!(asset.as_text().unwrap(), "<p>By Alice</p>");
+    }
+
+    #[test]
+    fn use_with_multiple_params() {
+        let content = r#"{~ use "_card.html", with "Welcome" as title, with author as byline}"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+
+        ctx.insert("author".into(), ContextValue::Text("Bob".into()));
+
+        let part_key: Text = format!("{}_card.html", PART_CONTEXT_PREFIX).into();
+        ctx.insert(
+            part_key,
+            ContextValue::Text("<h1>{~ get title}</h1><p>{~ get byline}</p>".into()),
+        );
+
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        assert_eq!(asset.as_text().unwrap(), "<h1>Welcome</h1><p>Bob</p>");
+    }
+
+    #[test]
+    fn use_with_params_no_commas() {
+        let content = r#"{~ use "_card.html" with "Welcome" as title with author as byline}"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+
+        ctx.insert("author".into(), ContextValue::Text("Bob".into()));
+
+        let part_key: Text = format!("{}_card.html", PART_CONTEXT_PREFIX).into();
+        ctx.insert(
+            part_key,
+            ContextValue::Text("<h1>{~ get title}</h1><p>{~ get byline}</p>".into()),
+        );
+
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        assert_eq!(asset.as_text().unwrap(), "<h1>Welcome</h1><p>Bob</p>");
+    }
+
+    #[test]
+    fn use_with_param_overrides_frontmatter() {
+        let content = r#"{~ use "_header.html", with "Override" as title}"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+
+        let part_key: Text = format!("{}_header.html", PART_CONTEXT_PREFIX).into();
+        ctx.insert(
+            part_key,
+            ContextValue::Text("title = \"Default\"\n\n***\n<h1>{~ get title}</h1>".into()),
+        );
+
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        assert_eq!(asset.as_text().unwrap(), "\n<h1>Override</h1>");
+    }
+
+    #[test]
+    fn use_with_dotted_identifier_param() {
+        let content = r#"{~ use "_tag.html", with site.name as label}"#;
+        let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
+        let mut ctx = Context::default();
+
+        let mut site = Context::default();
+        site.insert("name".into(), ContextValue::Text("My Site".into()));
+        ctx.insert("site".into(), ContextValue::Table(site));
+
+        let part_key: Text = format!("{}_tag.html", PART_CONTEXT_PREFIX).into();
+        ctx.insert(
+            part_key,
+            ContextValue::Text("<span>{~ get label}</span>".into()),
+        );
+
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        assert_eq!(asset.as_text().unwrap(), "<span>My Site</span>");
     }
 
     #[test]
