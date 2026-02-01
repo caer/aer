@@ -1,8 +1,10 @@
 use codas::types::Text;
 use logos::{Lexer, Logos, Span};
-use toml::Value;
 
-use crate::proc::{Asset, Context, ContextValue, MediaCategory, ProcessesAssets, ProcessingError};
+use crate::proc::{
+    Asset, Context, ContextValue, MediaCategory, ProcessesAssets, ProcessingError,
+    context_from_toml,
+};
 
 mod tokenizer;
 
@@ -114,37 +116,34 @@ impl TemplateProcessor {
             toml::from_str(content).map_err(|e| ProcessingError::Malformed {
                 message: format!("invalid TOML frontmatter: {}", e).into(),
             })?;
+        context_from_toml(table)
+    }
 
-        let mut context = Context::default();
-        for (key, value) in table {
-            let ctx_value = match value {
-                Value::String(s) => Ok(ContextValue::Text(s.clone().into())),
-                Value::Integer(n) => Ok(ContextValue::Text(n.to_string().into())),
-                Value::Float(n) => Ok(ContextValue::Text(n.to_string().into())),
-                Value::Boolean(b) => Ok(ContextValue::Text(b.to_string().into())),
-                Value::Array(arr) => {
-                    let items: Result<Vec<Text>, _> = arr
-                        .iter()
-                        .map(|v| match v {
-                            Value::String(s) => Ok(s.clone().into()),
-                            Value::Integer(n) => Ok(n.to_string().into()),
-                            Value::Float(n) => Ok(n.to_string().into()),
-                            Value::Boolean(b) => Ok(b.to_string().into()),
-                            _ => Err(ProcessingError::Malformed {
-                                message: "frontmatter arrays may only contain scalar values".into(),
-                            }),
-                        })
-                        .collect();
-                    Ok(ContextValue::List(items?))
-                }
-                Value::Table(_) => Err(ProcessingError::Malformed {
-                    message: "nested tables in frontmatter are not supported".into(),
-                }),
-                Value::Datetime(dt) => Ok(ContextValue::Text(dt.to_string().into())),
-            }?;
-            context.insert(key.into(), ctx_value);
+    /// Resolves an identifier against the context, traversing nested
+    /// tables for dotted identifiers like `user.name`.
+    fn resolve_dotted<'a>(context: &'a Context, identifier: &str) -> Option<&'a ContextValue> {
+        if !identifier.contains('.') {
+            let key: Text = identifier.into();
+            return context.get(&key);
         }
-        Ok(context)
+
+        let segments: Vec<&str> = identifier.split('.').collect();
+        let mut current = context;
+
+        for (i, segment) in segments.iter().enumerate() {
+            let key: Text = (*segment).into();
+            match current.get(&key) {
+                Some(ContextValue::Table(table)) if i < segments.len() - 1 => {
+                    current = table;
+                }
+                Some(value) if i == segments.len() - 1 => {
+                    return Some(value);
+                }
+                _ => return None,
+            }
+        }
+
+        None
     }
 
     /// Compiles a text template containing zero or more [TemplateExpression]s,
@@ -171,7 +170,7 @@ impl TemplateProcessor {
                                 })?
                                 .try_as_identifier()?;
 
-                            let value = match context.get(&identifier) {
+                            let value = match Self::resolve_dotted(context, identifier.as_str()) {
                                 Some(ContextValue::Text(text)) => text.clone(),
                                 Some(ContextValue::List(items)) => {
                                     let mut items_string = String::from("[");
@@ -185,7 +184,7 @@ impl TemplateProcessor {
                                     items_string.push(']');
                                     items_string.into()
                                 }
-                                None => format!("{{~ get {} }}", identifier).into(),
+                                _ => format!("{{~ get {} }}", identifier).into(),
                             };
 
                             output.push_str(&value);
@@ -214,11 +213,12 @@ impl TemplateProcessor {
                             };
 
                             // A variable reference is "truthy" if it exists and is not "false" or "0".
-                            let truthy = match context.get(&identifier) {
+                            let truthy = match Self::resolve_dotted(context, identifier.as_str()) {
                                 Some(ContextValue::Text(text)) => {
                                     text != "false" && text != "0" && !text.is_empty()
                                 }
                                 Some(ContextValue::List(list)) => !list.is_empty(),
+                                Some(ContextValue::Table(table)) => !table.is_empty(),
                                 None => false,
                             };
 
@@ -278,7 +278,8 @@ impl TemplateProcessor {
                                     message: "missing collection identifier in for loop".into(),
                                 })?
                                 .try_as_identifier()?;
-                            let collection = context.get(&collection_identifier);
+                            let collection =
+                                Self::resolve_dotted(context, collection_identifier.as_str());
 
                             let block_span = Self::traverse_template_block(lexer)?;
                             if let Some(ContextValue::List(items)) = collection
@@ -570,21 +571,19 @@ Body"#;
     }
 
     #[test]
-    fn skips_invalid_toml() {
-        // Nested tables are not supported, so this should be treated as no frontmatter.
-        let content = r#"[nested]
-key = "value"
+    fn parses_nested_tables() {
+        let content = r#"[user]
+name = "Alice"
+active = true
 
 ***
-
-Body"#;
+<p>{~ get user.name}</p>"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
         TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
 
-        // Should skip - content unchanged, context empty.
-        assert!(ctx.is_empty());
-        assert_eq!(asset.as_text().unwrap(), content);
+        assert!(ctx.contains_key(&"user".into()));
+        assert!(asset.as_text().unwrap().contains("<p>Alice</p>"));
     }
 
     #[test]
@@ -671,6 +670,70 @@ a delimiter in it"#;
             asset.as_text().unwrap(),
             "<html><header>Header</header><body>Content</body></html>"
         );
+    }
+
+    #[test]
+    fn dotted_if_condition() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ if user.active}Active!{~ end}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut nested = Context::default();
+        nested.insert("active".into(), ContextValue::Text("true".into()));
+        let mut ctx: Context = [("user".into(), ContextValue::Table(nested))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "Active!");
+    }
+
+    #[test]
+    fn dotted_for_loop() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ for x in data.items}{~ get x} {~ end}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut nested = Context::default();
+        nested.insert(
+            "items".into(),
+            ContextValue::List(vec!["a".into(), "b".into(), "c".into()]),
+        );
+        let mut ctx: Context = [("data".into(), ContextValue::Table(nested))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "a b c ");
+    }
+
+    #[test]
+    fn deeply_nested_dotted_access() {
+        let mut asset = Asset::new("test.html".into(), r#"{~ get a.b.c}"#.as_bytes().to_vec());
+        asset.set_media_type(MediaType::Html);
+
+        let mut inner = Context::default();
+        inner.insert("c".into(), ContextValue::Text("deep".into()));
+        let mut outer = Context::default();
+        outer.insert("b".into(), ContextValue::Table(inner));
+        let mut ctx: Context = [("a".into(), ContextValue::Table(outer))].into();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "deep");
+    }
+
+    #[test]
+    fn missing_dotted_path() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ get user.missing}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx = Context::default();
+        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "{~ get user.missing }");
     }
 
     #[test]

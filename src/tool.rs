@@ -60,7 +60,7 @@ pub struct ConfigProfile {
     #[serde(default)]
     procs: BTreeMap<String, ProcessorConfig>,
     #[serde(default)]
-    context: BTreeMap<String, String>,
+    context: toml::Table,
     #[serde(default)]
     paths: BTreeMap<String, String>,
 }

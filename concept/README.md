@@ -29,10 +29,15 @@ Example TOML structure:
 source = "site/"
 target = "public/"
 
-# The "context" processor sets values on the
+# The "context" table sets values on the
 # global context shared by all processors.
+# Nested tables are supported and accessed
+# via dotted identifiers in templates.
 [default.context]
 title = "Aer Site"
+
+[default.context.author]
+name = "Alice"
 
 # Asset processors to run in all environments
 [default.procs]
@@ -202,6 +207,8 @@ Example template:
 {~ end}
 </ul>
 ```
+
+Templates support nested variable access from the context. For example, `{~ get user.name}` would render the `name` property on a `user` table.
 
 ### Patterns
 

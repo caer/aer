@@ -10,7 +10,7 @@ use tokio::fs;
 use tokio::sync::mpsc;
 
 use crate::proc::template::PART_CONTEXT_PREFIX;
-use crate::proc::{Context, ContextValue};
+use crate::proc::{ContextValue, context_from_toml};
 use crate::tool::procs::{ProcessorConfig, collect_assets, is_part, process_asset};
 use crate::tool::{Config, ConfigProfile, DEFAULT_CONFIG_FILE, DEFAULT_CONFIG_PROFILE};
 
@@ -112,7 +112,7 @@ async fn build(
     source: &Path,
     target: &Path,
     procs: &BTreeMap<String, ProcessorConfig>,
-    context_values: &BTreeMap<String, String>,
+    context_values: &toml::Table,
 ) -> std::io::Result<()> {
     // Collect all assets from source directory.
     let mut assets = Vec::new();
@@ -124,10 +124,12 @@ async fn build(
     }
 
     // Build processing context.
-    let mut proc_context = Context::new();
-    for (key, value) in context_values {
-        proc_context.insert(key.clone().into(), ContextValue::Text(value.clone().into()));
-    }
+    let mut proc_context = context_from_toml(context_values.clone()).map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("invalid context value: {:?}", e),
+        )
+    })?;
 
     // Add the asset source root path to context.
     proc_context.insert(

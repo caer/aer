@@ -15,6 +15,7 @@ use serde::Deserialize;
 use crate::proc::{
     Asset, Context, ContextValue, MediaType, ProcessesAssets, ProcessingError,
     canonicalize::CanonicalizeProcessor,
+    context_from_toml,
     favicon::FaviconProcessor,
     image::ImageResizeProcessor,
     js_bundle::JsBundleProcessor,
@@ -103,10 +104,12 @@ pub async fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::R
     }
 
     // Build processing context from config.
-    let mut proc_context = Context::new();
-    for (key, value) in config.context {
-        proc_context.insert(key.clone().into(), ContextValue::Text(value.clone().into()));
-    }
+    let mut proc_context = context_from_toml(config.context).map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("invalid context value: {:?}", e),
+        )
+    })?;
 
     // Add the asset source root path to context
     // for processors that need filesystem access.

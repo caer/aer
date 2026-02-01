@@ -28,6 +28,45 @@ pub type Context = BTreeMap<Text, ContextValue>;
 pub enum ContextValue {
     Text(Text),
     List(Vec<Text>),
+    Table(Context),
+}
+
+/// Converts a TOML table into a processing [Context].
+pub fn context_from_toml(table: toml::Table) -> Result<Context, ProcessingError> {
+    let mut context = Context::default();
+    for (key, value) in table {
+        context.insert(key.into(), ContextValue::from_toml(value)?);
+    }
+    Ok(context)
+}
+
+impl ContextValue {
+    /// Converts a TOML [toml::Value] into a [ContextValue].
+    pub fn from_toml(value: toml::Value) -> Result<Self, ProcessingError> {
+        match value {
+            toml::Value::String(s) => Ok(ContextValue::Text(s.into())),
+            toml::Value::Integer(n) => Ok(ContextValue::Text(n.to_string().into())),
+            toml::Value::Float(n) => Ok(ContextValue::Text(n.to_string().into())),
+            toml::Value::Boolean(b) => Ok(ContextValue::Text(b.to_string().into())),
+            toml::Value::Array(arr) => {
+                let items: Result<Vec<Text>, _> = arr
+                    .into_iter()
+                    .map(|v| match v {
+                        toml::Value::String(s) => Ok(s.into()),
+                        toml::Value::Integer(n) => Ok(n.to_string().into()),
+                        toml::Value::Float(n) => Ok(n.to_string().into()),
+                        toml::Value::Boolean(b) => Ok(b.to_string().into()),
+                        _ => Err(ProcessingError::Malformed {
+                            message: "arrays may only contain scalar values".into(),
+                        }),
+                    })
+                    .collect();
+                Ok(ContextValue::List(items?))
+            }
+            toml::Value::Table(table) => Ok(ContextValue::Table(context_from_toml(table)?)),
+            toml::Value::Datetime(dt) => Ok(ContextValue::Text(dt.to_string().into())),
+        }
+    }
 }
 
 /// An error that occurs while procesing assets.
