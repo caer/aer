@@ -20,13 +20,13 @@ use std::collections::BTreeMap;
 pub async fn run(port: u16, profile: Option<&str>) -> std::io::Result<()> {
     // Load and merge configuration.
     let config = load_config(profile).await?;
-    let source_path = config.paths.get("source").ok_or_else(|| {
+    let source_path = config.paths.source.as_ref().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "missing paths.source in config",
         )
     })?;
-    let target_path = config.paths.get("target").ok_or_else(|| {
+    let target_path = config.paths.target.as_ref().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "missing paths.target in config",
@@ -36,9 +36,11 @@ pub async fn run(port: u16, profile: Option<&str>) -> std::io::Result<()> {
     let source = Path::new(source_path).to_path_buf();
     let target = Path::new(target_path).to_path_buf();
 
+    let clean_urls = config.paths.clean_urls.unwrap_or(false);
+
     // Run initial build.
     tracing::info!("Running initial build...");
-    build(&source, &target, &config.procs, &config.context).await?;
+    build(&source, &target, &config.procs, &config.context, clean_urls).await?;
 
     // Create channel for rebuild signals.
     let (rebuild_tx, mut rebuild_rx) = mpsc::channel::<()>(1);
@@ -62,7 +64,7 @@ pub async fn run(port: u16, profile: Option<&str>) -> std::io::Result<()> {
     let config = Arc::new(config);
     while rebuild_rx.recv().await.is_some() {
         tracing::info!("Change detected, rebuilding...");
-        match build(&source, &target, &config.procs, &config.context).await {
+        match build(&source, &target, &config.procs, &config.context, clean_urls).await {
             Ok(()) => tracing::info!("Rebuild complete"),
             Err(e) => tracing::error!("Rebuild failed: {}", e),
         }
@@ -113,6 +115,7 @@ async fn build(
     target: &Path,
     procs: &BTreeMap<String, ProcessorConfig>,
     context_values: &toml::Table,
+    clean_urls: bool,
 ) -> std::io::Result<()> {
     // Collect all assets from source directory.
     let mut assets = Vec::new();
@@ -154,7 +157,15 @@ async fn build(
     let mut success_count = 0;
     let mut error_count = 0;
     for (relative_path, content) in regular_assets {
-        let result = process_asset(&relative_path, content, procs, &proc_context, target).await;
+        let result = process_asset(
+            &relative_path,
+            content,
+            procs,
+            &proc_context,
+            target,
+            clean_urls,
+        )
+        .await;
 
         match result {
             Ok(()) => success_count += 1,

@@ -2,21 +2,6 @@
 
 Planned enhancements, roughly ordered by implementation dependency.
 
-## Clean URLs
-
-Write HTML assets as `slug/index.html` instead of `slug.html` so links
-can omit file extensions.
-
-**Where:**
-- `src/tool/procs.rs`, output path logic (~line 364). Rewrite non-index
-  HTML paths before writing.
-- `src/tool/procs.rs`, canonical path computation (~line 251). Account
-  for the rewrite when computing the `path` context variable.
-- `src/tool/serve/server.rs`. Add a fallback that tries `{path}.html`
-  and `{path}/index.html` when the requested path returns 404.
-- Gate behind a config option (e.g., `clean_urls = true` in the profile
-  paths table).
-
 ## Arrays of Objects
 
 Allow arrays to contain tables, not just scalars.

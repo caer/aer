@@ -74,16 +74,16 @@ pub async fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::R
     };
 
     // Validate source and target paths.
-    let source_path = config.paths.get("source").ok_or_else(|| {
+    let source_path = config.paths.source.as_ref().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            "missing paths.source in context",
+            "missing paths.source in config",
         )
     })?;
-    let target_path = config.paths.get("target").ok_or_else(|| {
+    let target_path = config.paths.target.as_ref().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            "missing paths.target in context",
+            "missing paths.target in config",
         )
     })?;
 
@@ -136,6 +136,7 @@ pub async fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::R
     tracing::info!("Cached {} parts", part_count);
 
     // Process assets in parallel.
+    let clean_urls = config.paths.clean_urls.unwrap_or(false);
     let procs = Arc::new(config.procs);
     let proc_context = Arc::new(proc_context);
     let target = Arc::new(target.to_path_buf());
@@ -146,8 +147,15 @@ pub async fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::R
             let proc_context = Arc::clone(&proc_context);
             let target = Arc::clone(&target);
             tokio::spawn(async move {
-                let result =
-                    process_asset(&relative_path, content, &procs, &proc_context, &target).await;
+                let result = process_asset(
+                    &relative_path,
+                    content,
+                    &procs,
+                    &proc_context,
+                    &target,
+                    clean_urls,
+                )
+                .await;
                 (relative_path, result)
             })
         })
@@ -236,6 +244,7 @@ pub async fn process_asset(
     procs: &BTreeMap<String, ProcessorConfig>,
     context: &Context,
     target: &Path,
+    clean_urls: bool,
 ) -> std::io::Result<()> {
     let mut asset = Asset::new(path.into(), content);
     let mut context = context.clone();
@@ -253,7 +262,15 @@ pub async fn process_asset(
         } else {
             path.to_string()
         };
-        let canonical_path = format!("{}/{}", root.trim_end_matches('/'), target_path,);
+
+        // With clean URLs, canonical paths omit the .html extension.
+        let canonical_target = if clean_urls && target_path.ends_with(".html") {
+            rewrite_clean_url_canonical(&target_path)
+        } else {
+            target_path
+        };
+
+        let canonical_path = format!("{}/{}", root.trim_end_matches('/'), canonical_target);
         context.insert("path".into(), ContextValue::Text(canonical_path.into()));
     }
 
@@ -361,11 +378,17 @@ pub async fn process_asset(
         .expect("all media types have at least one extension");
 
     // Replace the existing extension.
-    let processed_path = if let Some(dot_pos) = path.rfind('.') {
+    let mut processed_path = if let Some(dot_pos) = path.rfind('.') {
         format!("{}.{}", &path[..dot_pos], new_extension)
     } else {
         format!("{}.{}", path, new_extension)
     };
+
+    // With clean URLs, rewrite slug.html to slug/index.html.
+    if clean_urls && new_extension == "html" {
+        processed_path = rewrite_clean_url_path(&processed_path);
+    }
+
     let target_path = target.join(&processed_path);
 
     // Write the processed asset to target.
@@ -455,6 +478,30 @@ pub fn run_processor(
     (modified, result)
 }
 
+/// Rewrites an HTML output path for clean URLs.
+/// `slug.html` becomes `slug/index.html`; `index.html` is unchanged.
+fn rewrite_clean_url_path(path: &str) -> String {
+    let filename = path.rsplit('/').next().unwrap_or(path);
+    if filename != "index.html" {
+        let stem = &path[..path.len() - ".html".len()];
+        format!("{}/index.html", stem)
+    } else {
+        path.to_string()
+    }
+}
+
+/// Computes the canonical URL suffix for clean URLs.
+/// `slug.html` becomes `slug/`; `index.html` becomes empty;
+/// `dir/index.html` becomes `dir/`.
+fn rewrite_clean_url_canonical(path: &str) -> String {
+    let filename = path.rsplit('/').next().unwrap_or(path);
+    if filename == "index.html" {
+        path[..path.len() - "index.html".len()].to_string()
+    } else {
+        path[..path.len() - ".html".len()].to_string() + "/"
+    }
+}
+
 /// Configuration for a single processor.
 #[derive(Debug, Default, Deserialize, Clone)]
 pub struct ProcessorConfig {
@@ -491,6 +538,7 @@ mod tests {
 [default.paths]
 source = "site/"
 target = "public/"
+clean_urls = false
 
 [default.procs]
 canonicalize = { root = "http://localhost/" }
@@ -498,6 +546,7 @@ js_bundle = { minify = false }
 
 [production.paths]
 target = "dist/"
+clean_urls = true
 
 [production.procs]
 canonicalize = { root = "https://prod.example.com/" }
@@ -509,8 +558,9 @@ js_bundle = { minify = true }
         let merged = default_profile.merge(production_profile);
 
         // Paths should be merged (source from default, target from production).
-        assert_eq!(merged.paths.get("source").unwrap(), "site/");
-        assert_eq!(merged.paths.get("target").unwrap(), "dist/");
+        assert_eq!(merged.paths.source.as_deref(), Some("site/"));
+        assert_eq!(merged.paths.target.as_deref(), Some("dist/"));
+        assert_eq!(merged.paths.clean_urls, Some(true));
         // Procs should be merged with production overrides.
         let canonicalize = merged.procs.get("canonicalize").unwrap();
         assert_eq!(
@@ -519,5 +569,32 @@ js_bundle = { minify = true }
         );
         let js_bundle = merged.procs.get("js_bundle").unwrap();
         assert_eq!(js_bundle.minify, Some(true));
+    }
+
+    #[test]
+    fn rewrites_clean_url_paths() {
+        // Non-index HTML files are rewritten.
+        assert_eq!(rewrite_clean_url_path("about.html"), "about/index.html");
+        assert_eq!(
+            rewrite_clean_url_path("blog/post.html"),
+            "blog/post/index.html"
+        );
+
+        // Index files are unchanged.
+        assert_eq!(rewrite_clean_url_path("index.html"), "index.html");
+        assert_eq!(rewrite_clean_url_path("blog/index.html"), "blog/index.html");
+    }
+
+    #[test]
+    fn rewrites_clean_url_canonicals() {
+        // Non-index HTML files get a trailing slash.
+        assert_eq!(rewrite_clean_url_canonical("about.html"), "about/");
+        assert_eq!(rewrite_clean_url_canonical("blog/post.html"), "blog/post/");
+
+        // Root index.html becomes empty (root of site).
+        assert_eq!(rewrite_clean_url_canonical("index.html"), "");
+
+        // Nested index.html becomes directory path.
+        assert_eq!(rewrite_clean_url_canonical("blog/index.html"), "blog/");
     }
 }
