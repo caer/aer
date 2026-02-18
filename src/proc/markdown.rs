@@ -1,4 +1,5 @@
-use markdown::{mdast::Node, message::Message};
+use markdown::mdast::{AlignKind, Node};
+use markdown::message::Message;
 
 use super::{Asset, Context, MediaType, ProcessesAssets, ProcessingError};
 
@@ -22,7 +23,17 @@ impl ProcessesAssets for MarkdownProcessor {
         let text = asset.as_text()?;
 
         // Compile markdown into an abstract syntax tree.
-        let ast = markdown::to_mdast(text, &markdown::ParseOptions::default())?;
+        let ast = markdown::to_mdast(
+            text,
+            &markdown::ParseOptions {
+                constructs: markdown::Constructs {
+                    gfm_table: true,
+                    gfm_strikethrough: true,
+                    ..markdown::Constructs::default()
+                },
+                ..markdown::ParseOptions::default()
+            },
+        )?;
 
         // Compile the AST into HTML.
         let mut compiled_html = String::with_capacity(text.len());
@@ -228,8 +239,50 @@ fn compile_ast_node(parent_node: Option<&Node>, node: &Node, compiled_html: &mut
         | Node::LinkReference(_)
         | Node::ImageReference(_) => unimplemented!("reference"),
 
-        // Tables are unsupported.
-        Node::Table(_) | Node::TableRow(_) | Node::TableCell(_) => unimplemented!("table"),
+        // GFM table.
+        Node::Table(table) => {
+            *compiled_html += "<table>";
+
+            let mut rows = table.children.iter();
+
+            // First row is the header.
+            if let Some(header_node) = rows.next() {
+                *compiled_html += "<thead><tr>";
+                if let Node::TableRow(row) = header_node {
+                    for (i, cell) in row.children.iter().enumerate() {
+                        emit_cell_tag("th", table.align.get(i), compiled_html);
+                        compile_ast_node_children(cell, compiled_html);
+                        *compiled_html += "</th>";
+                    }
+                }
+                *compiled_html += "</tr></thead>";
+            }
+
+            // Remaining rows are the body.
+            let body_rows: Vec<_> = rows.collect();
+            if !body_rows.is_empty() {
+                *compiled_html += "<tbody>";
+                for row_node in body_rows {
+                    *compiled_html += "<tr>";
+                    if let Node::TableRow(row) = row_node {
+                        for (i, cell) in row.children.iter().enumerate() {
+                            emit_cell_tag("td", table.align.get(i), compiled_html);
+                            compile_ast_node_children(cell, compiled_html);
+                            *compiled_html += "</td>";
+                        }
+                    }
+                    *compiled_html += "</tr>";
+                }
+                *compiled_html += "</tbody>";
+            }
+
+            *compiled_html += "</table>";
+        }
+
+        // Table rows and cells are handled by the Table branch above.
+        Node::TableRow(_) | Node::TableCell(_) => {
+            compile_ast_node_children(node, compiled_html);
+        }
 
         // Embedded languages are unsupported.
         Node::InlineMath(_)
@@ -242,6 +295,19 @@ fn compile_ast_node(parent_node: Option<&Node>, node: &Node, compiled_html: &mut
         | Node::Toml(_)
         | Node::Yaml(_) => unimplemented!("embedded language"),
     }
+}
+
+/// Emits an opening `<th>` or `<td>` tag with an optional `align` attribute.
+fn emit_cell_tag(tag: &str, align: Option<&AlignKind>, compiled_html: &mut String) {
+    *compiled_html += "<";
+    *compiled_html += tag;
+    match align {
+        Some(AlignKind::Left) => *compiled_html += " align=\"left\"",
+        Some(AlignKind::Right) => *compiled_html += " align=\"right\"",
+        Some(AlignKind::Center) => *compiled_html += " align=\"center\"",
+        _ => {}
+    }
+    *compiled_html += ">";
 }
 
 /// Compiles all the children of `node` associated
