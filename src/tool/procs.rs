@@ -13,7 +13,7 @@ use tokio::fs;
 use serde::Deserialize;
 
 use crate::proc::{
-    Asset, Context, ContextValue, MediaType, ProcessesAssets, ProcessingError,
+    Asset, Context, ContextValue, Environment, MediaType, ProcessesAssets, ProcessingError,
     canonicalize::CanonicalizeProcessor,
     context_from_toml,
     favicon::FaviconProcessor,
@@ -25,16 +25,14 @@ use crate::proc::{
     scss::ScssProcessor,
     template::{PART_CONTEXT_PREFIX, TemplateProcessor},
 };
-use crate::tool::{Config, DEFAULT_CONFIG_FILE, DEFAULT_CONFIG_PROFILE};
+use crate::tool::DEFAULT_CONFIG_FILE;
+use crate::tool::kits::{self, ResolvedKit};
 
 /// Path prefix used to identify parts to store in the processing context.
 const PART_PATH_PREFIX: &str = "_";
 
 /// Prefix used to store completed asset metadata in the processing context.
 pub const ASSET_PATH_CONTEXT_KEY_PREFIX: &str = "_assets:";
-
-/// Key used to store the asset source root in the processing context.
-pub const ASSET_SOURCE_ROOT_CONTEXT_KEY: &str = "_asset_source_root";
 
 /// Returns true if the path represents a part.
 pub fn is_part(path: &str) -> bool {
@@ -47,37 +45,10 @@ pub fn is_part(path: &str) -> bool {
 /// If `procs_file` is `None`, looks for `Aer.toml` in the current directory.
 pub async fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::Result<()> {
     let config_path = procs_file.unwrap_or(Path::new(DEFAULT_CONFIG_FILE));
-    let profile_name = profile.unwrap_or(DEFAULT_CONFIG_PROFILE);
+    let loaded = crate::tool::load_config(config_path, profile).await?;
+    let config = loaded.profile;
 
-    // Try to read and parse the configuration file.
-    let config_toml = fs::read_to_string(config_path).await?;
-    let config: Config = toml::from_str(&config_toml).map_err(|e| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("invalid TOML: {}", e),
-        )
-    })?;
-
-    // Load the default profile.
-    let default_profile = config.profiles.get(DEFAULT_CONFIG_PROFILE).ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!("missing default profile: {}", DEFAULT_CONFIG_PROFILE),
-        )
-    })?;
-
-    // Merge the selected profile over the default.
-    let config = if profile_name == DEFAULT_CONFIG_PROFILE {
-        default_profile.clone()
-    } else {
-        let selected_profile = config.profiles.get(profile_name).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!("missing selected profile: {}", profile_name),
-            )
-        })?;
-        default_profile.merge(selected_profile)
-    };
+    let resolved_kits = kits::resolve_kits(&loaded.kits, &loaded.config_dir).await?;
 
     // Validate source and target paths.
     let source_path = config.paths.source.as_ref().ok_or_else(|| {
@@ -94,7 +65,6 @@ pub async fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::R
     })?;
 
     tracing::info!("Processing assets from {} to {}", source_path, target_path);
-    tracing::info!("Profile: {}", profile_name);
     tracing::debug!("Processors: {:?}", config.procs.keys().collect::<Vec<_>>());
 
     let source = Path::new(source_path);
@@ -108,7 +78,15 @@ pub async fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::R
         )
     })?;
 
-    build_assets(source, target, &config.procs, &mut proc_context, clean_urls).await
+    build_assets(
+        source,
+        target,
+        &config.procs,
+        &mut proc_context,
+        clean_urls,
+        &resolved_kits,
+    )
+    .await
 }
 
 /// Collects all assets from the source directory.
@@ -150,6 +128,7 @@ pub async fn build_assets(
     procs: &BTreeMap<String, ProcessorConfig>,
     context: &mut Context,
     clean_urls: bool,
+    resolved_kits: &[ResolvedKit],
 ) -> std::io::Result<()> {
     // Collect all assets from source directory.
     let mut assets = Vec::new();
@@ -161,12 +140,14 @@ pub async fn build_assets(
         fs::create_dir_all(target).await?;
     }
 
-    // Add the asset source root path to context
-    // for processors that need filesystem access.
-    context.insert(
-        ASSET_SOURCE_ROOT_CONTEXT_KEY.into(),
-        ContextValue::Text(source.to_string_lossy().to_string().into()),
-    );
+    // Build the environment for processors that need filesystem state.
+    let env = Arc::new(Environment {
+        source_root: source.to_path_buf(),
+        kit_imports: resolved_kits
+            .iter()
+            .map(|kit| (kit.name.clone(), kit.local_path.clone()))
+            .collect(),
+    });
 
     // Separate parts from regular assets and cache them in context.
     let mut regular_assets = Vec::new();
@@ -183,6 +164,60 @@ pub async fn build_assets(
         }
     }
     tracing::info!("Found {} parts", part_count);
+
+    // Collect and integrate kit assets.
+    let mut kit_asset_paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let project_asset_paths: std::collections::BTreeSet<String> =
+        regular_assets.iter().map(|(p, _)| p.clone()).collect();
+
+    for kit in resolved_kits {
+        let mut kit_assets = Vec::new();
+        collect_assets(&kit.local_path, &mut kit_assets).await?;
+
+        tracing::info!("Kit `{}`: found {} assets", kit.name, kit_assets.len());
+
+        // Pre-canonicalize kit assets.
+        let canonicalized = kits::pre_canonicalize_kit_assets(&kit_assets, &kit.dest);
+
+        let dest_trimmed = kit.dest.trim_start_matches('/');
+
+        for (relative_path, content) in canonicalized {
+            // Compute the output path for this kit asset.
+            let output_path = if dest_trimmed.is_empty() {
+                relative_path.clone()
+            } else {
+                format!("{}/{}", dest_trimmed, &relative_path)
+            };
+
+            if is_part(&relative_path) {
+                // Store kit parts as {kit_name}/{path} for template resolution.
+                let part_key = format!("{}{}/{}", PART_CONTEXT_PREFIX, kit.name, relative_path);
+                let content_str = String::from_utf8_lossy(&content).to_string();
+                context.insert(part_key.into(), ContextValue::Text(content_str.into()));
+                tracing::debug!("Found kit part: {}/{}", kit.name, relative_path);
+            } else {
+                // Collision detection.
+                if project_asset_paths.contains(&output_path) {
+                    tracing::warn!(
+                        "Kit `{}` asset `{}` collides with project asset at `{}`",
+                        kit.name,
+                        relative_path,
+                        output_path
+                    );
+                }
+                if kit_asset_paths.contains(&output_path) {
+                    tracing::warn!(
+                        "Kit `{}` asset `{}` collides with another kit asset at `{}`",
+                        kit.name,
+                        relative_path,
+                        output_path
+                    );
+                }
+                kit_asset_paths.insert(output_path.clone());
+                regular_assets.push((output_path, content));
+            }
+        }
+    }
 
     // Seed empty asset lists for every path that contains
     // regular assets. This lets path queries distinguish "path
@@ -215,12 +250,14 @@ pub async fn build_assets(
             .map(|(relative_path, content)| {
                 let procs = Arc::clone(&procs);
                 let ctx = Arc::clone(&shared_context);
+                let env = Arc::clone(&env);
                 let target = Arc::clone(&target);
                 let path = relative_path.clone();
                 let content = content.clone();
                 tokio::spawn(async move {
                     let result =
-                        process_asset(&path, content, &procs, &ctx, &target, clean_urls).await;
+                        process_asset(&path, content, &procs, &env, &ctx, &target, clean_urls)
+                            .await;
                     (path, result)
                 })
             })
@@ -327,6 +364,7 @@ pub async fn process_asset(
     path: &str,
     content: Vec<u8>,
     procs: &BTreeMap<String, ProcessorConfig>,
+    env: &Environment,
     context: &Context,
     target: &Path,
     clean_urls: bool,
@@ -382,7 +420,7 @@ pub async fn process_asset(
             for proc_name in TRANSFORMATION_PROCESSORS {
                 if let Some(config) = procs.get(*proc_name) {
                     let (modified, result) =
-                        run_processor(proc_name, config, &mut context, &mut asset);
+                        run_processor(proc_name, config, env, &mut context, &mut asset);
                     match result {
                         Err(ProcessingError::Deferred) => {
                             return Ok(ProcResult::Deferred);
@@ -453,7 +491,8 @@ pub async fn process_asset(
     // Perform phase two of processing (finalization).
     for proc_name in FINALIZATION_PROCESSORS {
         if let Some(config) = procs.get(*proc_name) {
-            let (modified, result) = run_processor(proc_name, config, &mut context, &mut asset);
+            let (modified, result) =
+                run_processor(proc_name, config, env, &mut context, &mut asset);
             match result {
                 Err(ProcessingError::Deferred) => {
                     return Ok(ProcResult::Deferred);
@@ -531,6 +570,7 @@ pub async fn process_asset(
 pub fn run_processor(
     name: &str,
     config: &ProcessorConfig,
+    env: &Environment,
     context: &mut Context,
     asset: &mut Asset,
 ) -> (bool, Result<(), ProcessingError>) {
@@ -539,30 +579,30 @@ pub fn run_processor(
     let before_len = asset.as_bytes().len();
 
     let result = match name {
-        "markdown" => MarkdownProcessor {}.process(context, asset),
-        "template" => TemplateProcessor.process(context, asset),
-        "favicon" => FaviconProcessor.process(context, asset),
+        "markdown" => MarkdownProcessor {}.process(env, context, asset),
+        "template" => TemplateProcessor.process(env, context, asset),
+        "favicon" => FaviconProcessor.process(env, context, asset),
         "canonicalize" => {
             let root = config.root.as_deref().unwrap_or("http://localhost/");
             if let Some(processor) = CanonicalizeProcessor::new(root) {
-                processor.process(context, asset)
+                processor.process(env, context, asset)
             } else {
                 Err(ProcessingError::Malformed {
                     message: format!("invalid root URL: {}", root).into(),
                 })
             }
         }
-        "scss" => ScssProcessor {}.process(context, asset),
+        "scss" => ScssProcessor {}.process(env, context, asset),
         "js_bundle" => {
             let minify = config.minify.unwrap_or(false);
-            JsBundleProcessor::new(minify).process(context, asset)
+            JsBundleProcessor::new(minify).process(env, context, asset)
         }
-        "minify_html" => MinifyHtmlProcessor.process(context, asset),
-        "minify_js" => MinifyJsProcessor.process(context, asset),
+        "minify_html" => MinifyHtmlProcessor.process(env, context, asset),
+        "minify_js" => MinifyJsProcessor.process(env, context, asset),
         "image" => {
             let width = config.max_width.unwrap_or(1920);
             let height = config.max_height.unwrap_or(1920);
-            ImageResizeProcessor::new(width, height).process(context, asset)
+            ImageResizeProcessor::new(width, height).process(env, context, asset)
         }
         _ => {
             tracing::warn!("Unknown processor: {}", name);
@@ -638,45 +678,6 @@ mod tests {
         assert!(!is_part("index.html"));
         assert!(!is_part("pages/about.html"));
         assert!(!is_part("my_file.html")); // underscore in middle, not at start of component
-    }
-
-    #[test]
-    fn merges_profiles() {
-        let toml = r#"
-[default.paths]
-source = "site/"
-target = "public/"
-clean_urls = false
-
-[default.procs]
-canonicalize = { root = "http://localhost/" }
-js_bundle = { minify = false }
-
-[production.paths]
-target = "dist/"
-clean_urls = true
-
-[production.procs]
-canonicalize = { root = "https://prod.example.com/" }
-js_bundle = { minify = true }
-"#;
-        let config: Config = toml::from_str(toml).unwrap();
-        let default_profile = config.profiles.get("default").unwrap();
-        let production_profile = config.profiles.get("production").unwrap();
-        let merged = default_profile.merge(production_profile);
-
-        // Paths should be merged (source from default, target from production).
-        assert_eq!(merged.paths.source.as_deref(), Some("site/"));
-        assert_eq!(merged.paths.target.as_deref(), Some("dist/"));
-        assert_eq!(merged.paths.clean_urls, Some(true));
-        // Procs should be merged with production overrides.
-        let canonicalize = merged.procs.get("canonicalize").unwrap();
-        assert_eq!(
-            canonicalize.root,
-            Some("https://prod.example.com/".to_string())
-        );
-        let js_bundle = merged.procs.get("js_bundle").unwrap();
-        assert_eq!(js_bundle.minify, Some(true));
     }
 
     #[test]

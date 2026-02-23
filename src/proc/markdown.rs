@@ -1,7 +1,7 @@
 use markdown::mdast::{AlignKind, Node};
 use markdown::message::Message;
 
-use super::{Asset, Context, MediaType, ProcessesAssets, ProcessingError};
+use super::{Asset, Context, Environment, MediaType, ProcessesAssets, ProcessingError};
 
 impl From<Message> for ProcessingError {
     fn from(error: Message) -> Self {
@@ -13,7 +13,12 @@ impl From<Message> for ProcessingError {
 pub struct MarkdownProcessor {}
 
 impl ProcessesAssets for MarkdownProcessor {
-    fn process(&self, _context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
+    fn process(
+        &self,
+        _env: &Environment,
+        _context: &mut Context,
+        asset: &mut Asset,
+    ) -> Result<(), ProcessingError> {
         if *asset.media_type() != MediaType::Markdown {
             return Ok(());
         }
@@ -320,7 +325,16 @@ fn compile_ast_node_children(node: &Node, compiled_html: &mut String) {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
+
+    fn test_env() -> Environment {
+        Environment {
+            source_root: PathBuf::from("."),
+            kit_imports: Default::default(),
+        }
+    }
 
     #[test]
     fn processes_markdown() {
@@ -331,7 +345,8 @@ mod tests {
                 .to_vec(),
         );
 
-        let _ = MarkdownProcessor {}.process(&mut Context::default(), &mut markdown_asset);
+        let _ =
+            MarkdownProcessor {}.process(&test_env(), &mut Context::default(), &mut markdown_asset);
 
         assert_eq!(
             "<h1 id=\"header-1\">Header 1</h1><p>Body</p><Blockquote><p>Quotation in <strong>bold</strong> and <em>italics</em>.</p></Blockquote>",

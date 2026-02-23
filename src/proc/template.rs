@@ -2,7 +2,7 @@ use codas::types::Text;
 use logos::{Lexer, Logos, Span};
 
 use crate::proc::{
-    Asset, Context, ContextValue, MediaCategory, ProcessesAssets, ProcessingError,
+    Asset, Context, ContextValue, Environment, MediaCategory, ProcessesAssets, ProcessingError,
     context_from_toml,
 };
 use crate::tool::procs::ASSET_PATH_CONTEXT_KEY_PREFIX;
@@ -53,7 +53,12 @@ pub const PART_CONTEXT_PREFIX: &str = "_part:";
 pub struct TemplateProcessor;
 
 impl ProcessesAssets for TemplateProcessor {
-    fn process(&self, context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
+    fn process(
+        &self,
+        _env: &Environment,
+        context: &mut Context,
+        asset: &mut Asset,
+    ) -> Result<(), ProcessingError> {
         if asset.media_type().category() != MediaCategory::Text {
             return Ok(());
         }
@@ -654,6 +659,8 @@ impl TemplateProcessor {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use crate::proc::{Asset, MediaType};
 
     use super::*;
@@ -682,6 +689,13 @@ mod tests {
         }
     }
 
+    fn test_env() -> Environment {
+        Environment {
+            source_root: PathBuf::from("."),
+            kit_imports: Default::default(),
+        }
+    }
+
     #[test]
     fn processes_if_template() {
         let mut asset = Asset::new(
@@ -691,7 +705,9 @@ mod tests {
         asset.set_media_type(MediaType::Html);
 
         let mut ctx: Context = [("is_empty".into(), ContextValue::Text("true".into()))].into();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(r#"This is empty!"#, asset.as_text().unwrap());
     }
@@ -706,7 +722,9 @@ mod tests {
 
         // When is_empty is false, "not is_empty" should render the block.
         let mut ctx: Context = [("is_empty".into(), ContextValue::Text("false".into()))].into();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(r#"Not empty!"#, asset.as_text().unwrap());
     }
@@ -721,7 +739,9 @@ mod tests {
 
         // When is_empty is true, "not is_empty" should NOT render the block.
         let mut ctx: Context = [("is_empty".into(), ContextValue::Text("true".into()))].into();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(r#""#, asset.as_text().unwrap());
     }
@@ -736,7 +756,9 @@ mod tests {
 
         // When variable is missing (falsy), "not missing" should render the block.
         let mut ctx = Context::default();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(r#"Default content"#, asset.as_text().unwrap());
     }
@@ -761,7 +783,9 @@ mod tests {
             ]),
         )]
         .into();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(
             r#"Items: [apple, banana, cherry, ]"#,
@@ -779,7 +803,9 @@ author = "Test"
 <h1>{~ get title}</h1>"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(get_text(&ctx, "title"), Some("Hello".into()));
         assert_eq!(get_text(&ctx, "author"), Some("Test".into()));
@@ -799,7 +825,9 @@ author = "Test"
 Body"#;
         let mut asset = Asset::new("page.md".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         let tags = get_list(&ctx, "tags").expect("expected list");
         assert_eq!(tags, vec!["rust", "web", "cli"]);
@@ -810,7 +838,9 @@ Body"#;
         let content = "<h1>No frontmatter here</h1>";
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert!(ctx.is_empty());
         assert_eq!(asset.as_text().unwrap(), content);
@@ -828,7 +858,9 @@ enabled = true
 Body"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(get_text(&ctx, "name"), Some("test".into()));
         assert_eq!(get_text(&ctx, "count"), Some("42".into()));
@@ -846,7 +878,9 @@ active = true
 <p>{~ get user.name}</p>"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert!(ctx.contains_key(&"user".into()));
         assert!(asset.as_text().unwrap().contains("<p>Alice</p>"));
@@ -861,7 +895,9 @@ that happens to have
 a delimiter in it"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         // Should skip - content unchanged, context empty.
         assert!(ctx.is_empty());
@@ -881,7 +917,9 @@ a delimiter in it"#;
             ContextValue::Text("<header>Header</header>".into()),
         );
 
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(
             asset.as_text().unwrap(),
@@ -902,7 +940,9 @@ a delimiter in it"#;
         let part_content = "charset = \"utf-8\"\n\n***\n<meta charset=\"{~ get charset}\">";
         ctx.insert(part_key, ContextValue::Text(part_content.into()));
 
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         // The part's frontmatter is used within the part itself.
         assert_eq!(
@@ -930,7 +970,9 @@ a delimiter in it"#;
             ContextValue::Text("<header>Header</header>".into()),
         );
 
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(
             asset.as_text().unwrap(),
@@ -949,7 +991,9 @@ a delimiter in it"#;
         let mut nested = Context::default();
         nested.insert("active".into(), ContextValue::Text("true".into()));
         let mut ctx: Context = [("user".into(), ContextValue::Table(nested))].into();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "Active!");
     }
@@ -972,7 +1016,9 @@ a delimiter in it"#;
             ]),
         );
         let mut ctx: Context = [("data".into(), ContextValue::Table(nested))].into();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "a b c ");
     }
@@ -987,7 +1033,9 @@ a delimiter in it"#;
         let mut outer = Context::default();
         outer.insert("b".into(), ContextValue::Table(inner));
         let mut ctx: Context = [("a".into(), ContextValue::Table(outer))].into();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "deep");
     }
@@ -1001,7 +1049,9 @@ a delimiter in it"#;
         asset.set_media_type(MediaType::Html);
 
         let mut ctx = Context::default();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "{~ get user.missing }");
     }
@@ -1015,7 +1065,9 @@ a delimiter in it"#;
         asset.set_media_type(MediaType::Html);
 
         let mut ctx: Context = [("name".into(), ContextValue::Text("Alice".into()))].into();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "Alice");
     }
@@ -1033,7 +1085,9 @@ a delimiter in it"#;
             ("name".into(), ContextValue::Text("Alice".into())),
         ]
         .into();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "Hello");
     }
@@ -1047,7 +1101,9 @@ a delimiter in it"#;
         asset.set_media_type(MediaType::Html);
 
         let mut ctx: Context = [("c".into(), ContextValue::Text("third".into()))].into();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "third");
     }
@@ -1061,7 +1117,9 @@ a delimiter in it"#;
         asset.set_media_type(MediaType::Html);
 
         let mut ctx = Context::default();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "{~ get title or name }");
     }
@@ -1077,7 +1135,9 @@ a delimiter in it"#;
         let mut site = Context::default();
         site.insert("name".into(), ContextValue::Text("My Site".into()));
         let mut ctx: Context = [("site".into(), ContextValue::Table(site))].into();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "My Site");
     }
@@ -1088,7 +1148,7 @@ a delimiter in it"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
 
-        let result = TemplateProcessor.process(&mut ctx, &mut asset);
+        let result = TemplateProcessor.process(&test_env(), &mut ctx, &mut asset);
         assert!(result.is_err());
     }
 
@@ -1104,7 +1164,9 @@ a delimiter in it"#;
             ContextValue::Text("<p>{~ get message}</p>".into()),
         );
 
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
         assert_eq!(asset.as_text().unwrap(), "<p>Hello</p>");
     }
 
@@ -1122,7 +1184,9 @@ a delimiter in it"#;
             ContextValue::Text("<p>By {~ get name}</p>".into()),
         );
 
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
         assert_eq!(asset.as_text().unwrap(), "<p>By Alice</p>");
     }
 
@@ -1140,7 +1204,9 @@ a delimiter in it"#;
             ContextValue::Text("<h1>{~ get title}</h1><p>{~ get byline}</p>".into()),
         );
 
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
         assert_eq!(asset.as_text().unwrap(), "<h1>Welcome</h1><p>Bob</p>");
     }
 
@@ -1158,7 +1224,9 @@ a delimiter in it"#;
             ContextValue::Text("<h1>{~ get title}</h1><p>{~ get byline}</p>".into()),
         );
 
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
         assert_eq!(asset.as_text().unwrap(), "<h1>Welcome</h1><p>Bob</p>");
     }
 
@@ -1174,7 +1242,9 @@ a delimiter in it"#;
             ContextValue::Text("title = \"Default\"\n\n***\n<h1>{~ get title}</h1>".into()),
         );
 
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
         assert_eq!(asset.as_text().unwrap(), "\n<h1>Override</h1>");
     }
 
@@ -1194,7 +1264,9 @@ a delimiter in it"#;
             ContextValue::Text("<span>{~ get label}</span>".into()),
         );
 
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
         assert_eq!(asset.as_text().unwrap(), "<span>My Site</span>");
     }
 
@@ -1221,7 +1293,9 @@ a delimiter in it"#;
             ContextValue::List(vec![ContextValue::Table(alice), ContextValue::Table(bob)]),
         )]
         .into();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "Alice: admin\nBob: editor\n");
     }
@@ -1242,7 +1316,9 @@ a delimiter in it"#;
             ]),
         )]
         .into();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "plain text ");
     }
@@ -1262,7 +1338,9 @@ url = "/about"
 {~ end}"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(
             asset.as_text().unwrap(),
@@ -1286,7 +1364,9 @@ url = "/about"
             ]),
         )]
         .into();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         let result = asset.as_text().unwrap();
         // Should render text items directly and non-text items with debug format.
@@ -1309,7 +1389,9 @@ url = "/about"
         colors.insert("red".into(), ContextValue::Text("#f00".into()));
 
         let mut ctx: Context = [("colors".into(), ContextValue::Table(colors))].into();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         // BTreeMap iterates alphabetically.
         assert_eq!(asset.as_text().unwrap(), "blue=#00f red=#f00 ");
@@ -1336,7 +1418,9 @@ url = "/about"
         people.insert("bob".into(), ContextValue::Table(bob));
 
         let mut ctx: Context = [("people".into(), ContextValue::Table(people))].into();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "alice: admin\nbob: editor\n");
     }
@@ -1350,7 +1434,9 @@ url = "/about"
         asset.set_media_type(MediaType::Html);
 
         let mut ctx: Context = [("empty".into(), ContextValue::Table(Context::default()))].into();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "beforeafter");
     }
@@ -1366,7 +1452,9 @@ prod = "https://example.com"
 {~ end}"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(
             asset.as_text().unwrap(),
@@ -1383,7 +1471,9 @@ prod = "https://example.com"
         asset.set_media_type(MediaType::Html);
 
         let mut ctx: Context = [("role".into(), ContextValue::Text("admin".into()))].into();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "yes");
     }
@@ -1397,7 +1487,9 @@ prod = "https://example.com"
         asset.set_media_type(MediaType::Html);
 
         let mut ctx: Context = [("role".into(), ContextValue::Text("editor".into()))].into();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "");
     }
@@ -1411,7 +1503,9 @@ prod = "https://example.com"
         asset.set_media_type(MediaType::Html);
 
         let mut ctx: Context = [("role".into(), ContextValue::Text("editor".into()))].into();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "restricted");
     }
@@ -1425,7 +1519,9 @@ prod = "https://example.com"
         asset.set_media_type(MediaType::Html);
 
         let mut ctx: Context = [("role".into(), ContextValue::Text("admin".into()))].into();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "");
     }
@@ -1443,7 +1539,9 @@ prod = "https://example.com"
             ("favorite".into(), ContextValue::Text("blue".into())),
         ]
         .into();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "match");
     }
@@ -1457,7 +1555,9 @@ prod = "https://example.com"
         asset.set_media_type(MediaType::Html);
 
         let mut ctx = Context::default();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "");
     }
@@ -1471,7 +1571,9 @@ prod = "https://example.com"
         asset.set_media_type(MediaType::Html);
 
         let mut ctx = Context::default();
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
 
         // Missing variable is not equal to "value", so `is not` renders.
         assert_eq!(asset.as_text().unwrap(), "yes");
@@ -1488,7 +1590,7 @@ prod = "https://example.com"
         asset.set_media_type(MediaType::Html);
 
         let mut ctx = Context::default();
-        let result = TemplateProcessor.process(&mut ctx, &mut asset);
+        let result = TemplateProcessor.process(&test_env(), &mut ctx, &mut asset);
         assert!(matches!(result, Err(ProcessingError::Compilation { .. })));
     }
 
@@ -1506,7 +1608,7 @@ prod = "https://example.com"
         let mut ctx = Context::default();
         ctx.insert("_assets:blog".into(), ContextValue::List(vec![]));
 
-        let result = TemplateProcessor.process(&mut ctx, &mut asset);
+        let result = TemplateProcessor.process(&test_env(), &mut ctx, &mut asset);
         assert_eq!(result, Err(ProcessingError::Deferred));
     }
 
@@ -1534,7 +1636,9 @@ prod = "https://example.com"
             ]),
         );
 
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
         assert_eq!(asset.as_text().unwrap(), "hello world ");
     }
 
@@ -1562,7 +1666,9 @@ prod = "https://example.com"
             ContextValue::List(vec![ContextValue::Table(entry)]),
         );
 
-        TemplateProcessor.process(&mut ctx, &mut asset).unwrap();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
         assert_eq!(
             asset.as_text().unwrap(),
             "<a href=\"https://example.com/posts/my-post/\">My Post</a>\n"

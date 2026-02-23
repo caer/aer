@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use codas::types::Text;
 
@@ -14,10 +15,22 @@ pub mod minify_js;
 pub mod scss;
 pub mod template;
 
+/// Build-time system state shared across all processors.
+#[derive(Debug, Clone)]
+pub struct Environment {
+    pub source_root: PathBuf,
+    pub kit_imports: BTreeMap<String, PathBuf>,
+}
+
 /// A thing that processes [Asset]s.
 pub trait ProcessesAssets {
     /// Processes `asset` with access to a shared `context`.
-    fn process(&self, context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError>;
+    fn process(
+        &self,
+        env: &Environment,
+        context: &mut Context,
+        asset: &mut Asset,
+    ) -> Result<(), ProcessingError>;
 }
 
 /// A shared processing context passed between processors.

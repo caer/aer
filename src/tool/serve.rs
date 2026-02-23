@@ -6,17 +6,19 @@ mod watcher;
 use std::path::Path;
 use std::sync::Arc;
 
-use tokio::fs;
 use tokio::sync::mpsc;
 
 use crate::proc::context_from_toml;
+use crate::tool::DEFAULT_CONFIG_FILE;
+use crate::tool::kits::{self, ResolvedKit};
 use crate::tool::procs::{ProcessorConfig, build_assets};
-use crate::tool::{Config, ConfigProfile, DEFAULT_CONFIG_FILE, DEFAULT_CONFIG_PROFILE};
 
 /// Runs the development server with file watching.
 pub async fn run(port: u16, profile: Option<&str>) -> std::io::Result<()> {
-    // Load and merge configuration.
-    let config = load_config(profile).await?;
+    let config_path = Path::new(DEFAULT_CONFIG_FILE);
+    let loaded = crate::tool::load_config(config_path, profile).await?;
+    let config = loaded.profile;
+
     let source_path = config.paths.source.as_ref().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -32,12 +34,22 @@ pub async fn run(port: u16, profile: Option<&str>) -> std::io::Result<()> {
 
     let source = Path::new(source_path).to_path_buf();
     let target = Path::new(target_path).to_path_buf();
-
     let clean_urls = config.paths.clean_urls.unwrap_or(false);
+
+    // Resolve kits once at startup.
+    let resolved_kits = kits::resolve_kits(&loaded.kits, &loaded.config_dir).await?;
 
     // Run initial build.
     tracing::info!("Running initial build...");
-    build(&source, &target, &config.procs, &config.context, clean_urls).await?;
+    build(
+        &source,
+        &target,
+        &config.procs,
+        &config.context,
+        clean_urls,
+        &resolved_kits,
+    )
+    .await?;
 
     // Create channel for rebuild signals.
     let (rebuild_tx, mut rebuild_rx) = mpsc::channel::<()>(1);
@@ -61,7 +73,16 @@ pub async fn run(port: u16, profile: Option<&str>) -> std::io::Result<()> {
     let config = Arc::new(config);
     while rebuild_rx.recv().await.is_some() {
         tracing::info!("Change detected, rebuilding...");
-        match build(&source, &target, &config.procs, &config.context, clean_urls).await {
+        match build(
+            &source,
+            &target,
+            &config.procs,
+            &config.context,
+            clean_urls,
+            &resolved_kits,
+        )
+        .await
+        {
             Ok(()) => tracing::info!("Rebuild complete"),
             Err(e) => tracing::error!("Rebuild failed: {}", e),
         }
@@ -73,39 +94,6 @@ pub async fn run(port: u16, profile: Option<&str>) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Loads and merges configuration from Aer.toml.
-async fn load_config(profile: Option<&str>) -> std::io::Result<ConfigProfile> {
-    let config_path = Path::new(DEFAULT_CONFIG_FILE);
-    let profile_name = profile.unwrap_or(DEFAULT_CONFIG_PROFILE);
-
-    let config_toml = fs::read_to_string(config_path).await?;
-    let config: Config = toml::from_str(&config_toml).map_err(|e| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("invalid TOML: {}", e),
-        )
-    })?;
-
-    let default_profile = config.profiles.get(DEFAULT_CONFIG_PROFILE).ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!("missing default profile: {}", DEFAULT_CONFIG_PROFILE),
-        )
-    })?;
-
-    if profile_name == DEFAULT_CONFIG_PROFILE {
-        Ok(default_profile.clone())
-    } else {
-        let selected_profile = config.profiles.get(profile_name).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!("missing selected profile: {}", profile_name),
-            )
-        })?;
-        Ok(default_profile.merge(selected_profile))
-    }
-}
-
 /// Builds all assets from source to target.
 async fn build(
     source: &Path,
@@ -113,6 +101,7 @@ async fn build(
     procs: &std::collections::BTreeMap<String, ProcessorConfig>,
     context_values: &toml::Table,
     clean_urls: bool,
+    resolved_kits: &[ResolvedKit],
 ) -> std::io::Result<()> {
     let mut context = context_from_toml(context_values.clone()).map_err(|e| {
         std::io::Error::new(
@@ -121,5 +110,13 @@ async fn build(
         )
     })?;
 
-    build_assets(source, target, procs, &mut context, clean_urls).await
+    build_assets(
+        source,
+        target,
+        procs,
+        &mut context,
+        clean_urls,
+        resolved_kits,
+    )
+    .await
 }

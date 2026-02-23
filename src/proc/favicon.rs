@@ -2,13 +2,18 @@ use std::io::Cursor;
 
 use image::ImageFormat;
 
-use super::{Asset, Context, MediaType, ProcessesAssets, ProcessingError};
+use super::{Asset, Context, Environment, MediaType, ProcessesAssets, ProcessingError};
 
 /// Converts `favicon.png` files to `32x32` pixel `favicon.ico` files.
 pub struct FaviconProcessor;
 
 impl ProcessesAssets for FaviconProcessor {
-    fn process(&self, _context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
+    fn process(
+        &self,
+        _env: &Environment,
+        _context: &mut Context,
+        asset: &mut Asset,
+    ) -> Result<(), ProcessingError> {
         if asset.media_type() != &MediaType::Png {
             return Ok(());
         }
@@ -62,7 +67,16 @@ impl ProcessesAssets for FaviconProcessor {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
+
+    fn test_env() -> Environment {
+        Environment {
+            source_root: PathBuf::from("."),
+            kit_imports: Default::default(),
+        }
+    }
 
     #[test]
     fn converts_favicon_png_to_ico() {
@@ -75,7 +89,7 @@ mod tests {
 
         // Process the favicon.
         FaviconProcessor
-            .process(&mut Context::default(), &mut asset)
+            .process(&test_env(), &mut Context::default(), &mut asset)
             .unwrap();
 
         // Verify the media type changed to ICO.
@@ -98,7 +112,7 @@ mod tests {
 
         // Process should skip this file.
         FaviconProcessor
-            .process(&mut Context::default(), &mut asset)
+            .process(&test_env(), &mut Context::default(), &mut asset)
             .unwrap();
 
         // Verify the asset wasn't modified.

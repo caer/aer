@@ -1,12 +1,17 @@
 use minify_html_onepass::{Cfg, in_place};
 
-use super::{Asset, Context, MediaType, ProcessesAssets, ProcessingError};
+use super::{Asset, Context, Environment, MediaType, ProcessesAssets, ProcessingError};
 
 /// Minifies HTML assets by removing unnecessary whitespace and comments.
 pub struct MinifyHtmlProcessor;
 
 impl ProcessesAssets for MinifyHtmlProcessor {
-    fn process(&self, _context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
+    fn process(
+        &self,
+        _env: &Environment,
+        _context: &mut Context,
+        asset: &mut Asset,
+    ) -> Result<(), ProcessingError> {
         if asset.media_type() != &MediaType::Html {
             return Ok(());
         }
@@ -38,7 +43,16 @@ impl ProcessesAssets for MinifyHtmlProcessor {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
+
+    fn test_env() -> Environment {
+        Environment {
+            source_root: PathBuf::from("."),
+            kit_imports: Default::default(),
+        }
+    }
 
     #[test]
     fn minifies_html() {
@@ -56,7 +70,7 @@ mod tests {
         "#;
         let mut asset = Asset::new("test.html".into(), html.as_bytes().to_vec());
         MinifyHtmlProcessor
-            .process(&mut Context::default(), &mut asset)
+            .process(&test_env(), &mut Context::default(), &mut asset)
             .unwrap();
 
         let result = asset.as_text().unwrap();
@@ -69,7 +83,7 @@ mod tests {
     fn skips_non_html() {
         let mut asset = Asset::new("style.css".into(), b"body { }".to_vec());
         MinifyHtmlProcessor
-            .process(&mut Context::default(), &mut asset)
+            .process(&test_env(), &mut Context::default(), &mut asset)
             .unwrap();
         assert_eq!(asset.as_text().unwrap(), "body { }");
     }

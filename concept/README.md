@@ -231,6 +231,73 @@ processor will save the rendered asset contents onto the processing context
 in the `content` variable, and replace the asset with the rendered contents
 of the part.
 
+## Kits
+
+Kits are reusable asset packages that can be shared across `aer` projects. Each kit is a git repository containing a `kit/` subdirectory whose contents are files like SCSS, templates, fonts, images, or anything else `aer` can process. Only the contents of `kit/` are treated as assets. Kits are fetched from a `git` repository and made available to the processing pipeline.
+
+Kits _aren't_ dependencies in the conventional sense. They don't support transitive resolution or version conflict handling--they're just a flat, self-contained bundle of assets.
+
+### Configuration
+
+Kits are declared in `Aer.toml` under `[kits]`. Here's an example for a `base` kit:
+
+```toml
+[kits.base]
+git = "git@github.com:caer/my-kit.git"
+ref = "v1.0.0"
+dest = "/"
+```
+
+- `git`: A git URL. Any URL that `git clone` accepts is valid (SSH, HTTPS).
+- `ref`: A git ref, like a tag, branch, or commit hash.
+- `dest`: The output path for the kit's assets. Defaults to `/vendor/kits/<kit-name>`.
+
+Authentication is delegated to git. If `git clone <url>` works in the current environment (via SSH keys, credential helpers, or tokens), kit resolution will work. No auth configuration exists in `aer` itself.
+
+For local development, a `path` override can be specified:
+
+```toml
+[kits.withcaer-base]
+git = "git@github.com:caer/my-kit.git"
+ref = "v1.0.0"
+path = "../my-kit"
+```
+
+When `path` is set _and_ the path exists, `aer` reads assets directly from `{path}/kit/` instead of cloning from `git`. This feature enables iterating locally on a kit without needing to round-trip through git. In environments where `path` doesn't exist, `aer` will always fall back to using `git`.
+
+### Resolution
+
+Kits are resolved automatically whenever `aer` is run against assets. For each `kit` declared in `[kits]`:
+
+1. If `.aer/kits/<name>` exists _and_ its git state matches the expected `ref`, the cached copy is used. No network access occurs.
+
+2. If the kit is not cached or the `ref` has changed, `aer` removes the stale clone and re-clones the repository into `.aer/kits/<name>`.
+
+The `.aer` directory is located in the same directory as the current `Aer.toml`. Because kits are pinned to a `ref`, resolution is deterministic. The first build on a fresh clone fetches kits once; subsequent builds use the cache. Clones are always shallow (`--depth 1`).
+
+### Output
+
+Before kits'  assets are processed, relative paths in kit assets (like `url("fonts/ttf/literata.ttf")` in SCSS) are canonicalized to absolute paths under the kit's configured `dest` (defaulting to `/vendor/kits/{kit_name}`). 
+
+After canonicalization, kits' assets go through [the same processing](#asset-processing) as other assets. Kits' processed assets are written to `{target}/{dest}/`.
+
+If a kit asset would overwrite a project asset or another kit's asset at the same output path, `aer` emits a warning during processing.
+
+### Namespacing
+
+Kits are available to the processing pipeline under the kit's declared name. Every asset processor that resolves references (like SCSS or templates) looks in the kit directories alongside the main source using the `{kit_name}/[path]` convention:
+
+```scss
+// SCSS: @use resolves through the kit namespace
+@use "my-kit/theme";
+@use "my-kit/colors" with ($accent-4: #D2A74C);
+```
+
+```html
+<!-- Templates: {~ use} resolves through the kit namespace -->
+{~ use "withcaer-base/footer" }
+```
+
 ## Color Palettes
 
 ### `aer palette` Command

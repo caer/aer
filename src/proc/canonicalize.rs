@@ -2,7 +2,7 @@ use codas::types::Text;
 use lol_html::{RewriteStrSettings, element, rewrite_str};
 use url::Url;
 
-use super::{Asset, Context, MediaType, ProcessesAssets, ProcessingError};
+use super::{Asset, Context, Environment, MediaType, ProcessesAssets, ProcessingError};
 
 /// Canonicalizes relative and absolute URL paths in HTML assets
 /// by converting them to fully-qualified URLs based on a root parameter.
@@ -92,7 +92,7 @@ impl CanonicalizeProcessor {
     }
 
     /// Processes CSS content, canonicalizing all `url()` values.
-    fn process_css(&self, css: &str, asset_path: &str) -> String {
+    pub(crate) fn process_css(&self, css: &str, asset_path: &str) -> String {
         let mut result = String::with_capacity(css.len());
         let mut chars = css.char_indices().peekable();
 
@@ -158,7 +158,11 @@ impl CanonicalizeProcessor {
     }
 
     /// Processes HTML content, canonicalizing URLs in attributes.
-    fn process_html(&self, html: &str, asset_path: &Text) -> Result<String, ProcessingError> {
+    pub(crate) fn process_html(
+        &self,
+        html: &str,
+        asset_path: &Text,
+    ) -> Result<String, ProcessingError> {
         let url_attrs = [
             "href",
             "src",
@@ -231,7 +235,12 @@ impl CanonicalizeProcessor {
 }
 
 impl ProcessesAssets for CanonicalizeProcessor {
-    fn process(&self, _context: &mut Context, asset: &mut Asset) -> Result<(), ProcessingError> {
+    fn process(
+        &self,
+        _env: &Environment,
+        _context: &mut Context,
+        asset: &mut Asset,
+    ) -> Result<(), ProcessingError> {
         match asset.media_type() {
             MediaType::Html => {
                 tracing::trace!("canonicalize: {}", asset.path());
@@ -251,7 +260,16 @@ impl ProcessesAssets for CanonicalizeProcessor {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
+
+    fn test_env() -> Environment {
+        Environment {
+            source_root: PathBuf::from("."),
+            kit_imports: Default::default(),
+        }
+    }
 
     fn processor() -> CanonicalizeProcessor {
         CanonicalizeProcessor::new("https://example.com").unwrap()
@@ -387,7 +405,8 @@ mod tests {
     fn skips_non_html_css_assets() {
         let p = processor();
         let mut asset = Asset::new("script.js".into(), b"const x = '/api'".to_vec());
-        p.process(&mut Context::default(), &mut asset).unwrap();
+        p.process(&test_env(), &mut Context::default(), &mut asset)
+            .unwrap();
         assert_eq!(asset.as_text().unwrap(), "const x = '/api'");
     }
 
@@ -399,7 +418,8 @@ mod tests {
             b"@font-face { src: url('/fonts/test.ttf'); }".to_vec(),
         );
         assert_eq!(asset.media_type(), &MediaType::Css);
-        p.process(&mut Context::default(), &mut asset).unwrap();
+        p.process(&test_env(), &mut Context::default(), &mut asset)
+            .unwrap();
         assert_eq!(
             asset.as_text().unwrap(),
             "@font-face { src: url('https://example.com/fonts/test.ttf'); }"
@@ -413,7 +433,8 @@ mod tests {
             "/blog/posts/article.html".into(),
             b"<a href=\"../index.html\">Back</a>".to_vec(),
         );
-        p.process(&mut Context::default(), &mut asset).unwrap();
+        p.process(&test_env(), &mut Context::default(), &mut asset)
+            .unwrap();
         assert!(
             asset
                 .as_text()
