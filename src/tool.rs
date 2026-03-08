@@ -61,6 +61,8 @@ pub struct KitConfig {
     pub dest: Option<String>,
     #[serde(default)]
     pub path: Option<String>,
+    #[serde(default)]
+    pub vendored: bool,
 }
 
 /// Raw TOML structure of an `Aer.toml` file.
@@ -261,6 +263,22 @@ source = "site/"
             config.kits["base"].git_url,
             "git@github.com:example/kit.git"
         );
+        assert!(!config.kits["base"].vendored);
+    }
+
+    #[test]
+    fn parses_vendored_kit() {
+        let toml = r#"
+[kits.brand]
+git = "git@github.com:example/brand.git"
+ref = "main"
+vendored = true
+
+[default.paths]
+source = "site/"
+"#;
+        let config = load_config_from_str(toml, PathBuf::from("."), None).unwrap();
+        assert!(config.kits["brand"].vendored);
     }
 
     #[test]

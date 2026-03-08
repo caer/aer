@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 
@@ -25,6 +25,19 @@ async fn main() -> std::io::Result<()> {
             profile,
         } => aer::tool::procs::run(procs_file.as_deref(), profile.as_deref()).await,
         Commands::Serve { port, profile } => aer::tool::serve::run(port, profile.as_deref()).await,
+        Commands::Kits { command } => match command {
+            KitsCommand::Refresh { kit, update } => {
+                let config_path = Path::new(aer::tool::DEFAULT_CONFIG_FILE);
+                let loaded = aer::tool::load_config(config_path, None).await?;
+                aer::tool::kits::refresh_kits(
+                    &loaded.kits,
+                    &loaded.config_dir,
+                    kit.as_deref(),
+                    update,
+                )
+                .await
+            }
+        },
     }
 }
 
@@ -70,5 +83,25 @@ enum Commands {
         /// Profile to use (merges with default)
         #[arg(short, long)]
         profile: Option<String>,
+    },
+
+    /// Manage Kits.
+    Kits {
+        #[command(subcommand)]
+        command: KitsCommand,
+    },
+}
+
+/// Kit management sub-commands.
+#[derive(Subcommand)]
+enum KitsCommand {
+    /// Refresh kits from their git sources.
+    Refresh {
+        /// Refresh only this kit.
+        #[arg(long)]
+        kit: Option<String>,
+        /// Force refresh, even if the local copy appears up to date.
+        #[arg(long)]
+        update: bool,
     },
 }

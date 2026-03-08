@@ -8,7 +8,7 @@ use notify_debouncer_mini::{DebounceEventResult, Debouncer, new_debouncer, notif
 use tokio::sync::mpsc;
 
 /// Paths to ignore when watching for changes.
-const IGNORED_PATHS: &[&str] = &[".git", "target", ".DS_Store", "node_modules"];
+const IGNORED_PATHS: &[&str] = &[".git", ".aer", "target", ".DS_Store", "node_modules"];
 
 /// Starts a file watcher on the given directory.
 ///

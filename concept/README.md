@@ -251,6 +251,8 @@ dest = "/"
 - `git`: A git URL. Any URL that `git clone` accepts is valid (SSH, HTTPS).
 - `ref`: A git ref, like a tag, branch, or commit hash.
 - `dest`: The output path for the kit's assets. Defaults to `/vendor/kits/<kit-name>`.
+- `vendored`: When `true`, the kit is committed into the repository so that builds don't require git access. See [Vendoring](#vendoring).
+- `path`: A local filesystem path for development. See below.
 
 Authentication is delegated to git. If `git clone <url>` works in the current environment (via SSH keys, credential helpers, or tokens), kit resolution will work. No auth configuration exists in `aer` itself.
 
@@ -261,19 +263,80 @@ For local development, a `path` override can be specified:
 git = "git@github.com:caer/my-kit.git"
 ref = "v1.0.0"
 path = "../my-kit"
+vendored = true
 ```
 
-When `path` is set _and_ the path exists, `aer` reads assets directly from `{path}/kit/` instead of cloning from `git`. This feature enables iterating locally on a kit without needing to round-trip through git. In environments where `path` doesn't exist, `aer` will always fall back to using `git`.
+When `path` is set _and_ the path exists, `aer` reads assets directly from `{path}/kit/` instead of cloning from `git`. This feature enables iterating locally on a kit without needing to round-trip through git. In environments where `path` doesn't exist, `aer` falls back to the next resolution step.
 
 ### Resolution
 
-Kits are resolved automatically whenever `aer` is run against assets. For each `kit` declared in `[kits]`:
+Kits are resolved automatically whenever `aer` is run against assets. For each kit declared in `[kits]`, resolution follows this order:
 
-1. If `.aer/kits/<name>` exists _and_ its git state matches the expected `ref`, the cached copy is used. No network access occurs.
+1. If `path` is set and exists, use the local path directly. Assets are read from `{path}/kit/`.
 
-2. If the kit is not cached or the `ref` has changed, `aer` removes the stale clone and re-clones the repository into `.aer/kits/<name>`.
+2. If `vendored` is `true` and a vendored copy exists at `.aer/kits/vendored/<name>/`, use the vendored copy.
 
-The `.aer` directory is located in the same directory as the current `Aer.toml`. Because kits are pinned to a `ref`, resolution is deterministic. The first build on a fresh clone fetches kits once; subsequent builds use the cache. Clones are always shallow (`--depth 1`).
+3. If a cached clone exists at `.aer/kits/cached/<name>/` and its git state matches the expected `ref`, use the cache.
+
+4. Otherwise, fetch the repository into `.aer/kits/cached/<name>/`.
+
+The `.aer` directory is located in the same directory as the current `Aer.toml`. Because kits are pinned to a `ref`, resolution is deterministic. The first build on a fresh clone fetches kits once; subsequent builds use the cache. Fetches are always shallow (`--depth 1`).
+
+Before resolving any kit, `aer` reads the lockfile and checks for drift. If a vendored kit's `git` or `ref` in `Aer.toml` has changed since the last refresh, or if vendored files have been modified on disk, `aer` exits with an error and instructions to run `aer kits refresh`.
+
+### Vendoring
+
+Vendoring commits a kit's assets into the project repository so that builds succeed without git access to the kit's remote. This is useful in CI environments (like Cloudflare Pages) where the build worker can only access the connected repository.
+
+#### `aer kits refresh` Command
+
+Fetches vendored kits from their git sources, copies the contents of each kit's `kit/` subdirectory into `.aer/kits/vendored/<name>/`, and writes a lockfile.
+
+- `--kit <name>`: Refresh only the named kit.
+- `--update`: Force a re-fetch even if the lockfile indicates the kit is already up to date.
+
+If the lockfile already matches the kit's `git` and `ref` and a vendored copy exists, the kit is skipped unless `--update` is passed.
+
+#### Lockfile
+
+`aer kits refresh` writes `.aer/kits/lockfile.toml` tracking each vendored kit's git URL, ref, resolved commit hash, and a Blake3 content hash of the vendored files. The lockfile is committed alongside the vendored assets.
+
+Example lockfile:
+
+```toml
+[kits.brand]
+git = "git@github.com:org/brand.git"
+ref = "main"
+commit = "a1b2c3d4e5f6..."
+hash = "f6e5d4c3b2a1..."
+```
+
+#### Drift Detection
+
+On every build (`aer procs`, `aer serve`), `aer` checks the lockfile against the current `Aer.toml`:
+
+- If a vendored kit's `git` or `ref` has changed, `aer` errors with a prompt to run `aer kits refresh`.
+- If a vendored kit is missing from the lockfile entirely, `aer` errors with the same prompt.
+- If vendored files on disk don't match the lockfile's content hash, `aer` errors with a prompt to run `aer kits refresh --update`.
+
+Non-vendored kits without lockfile entries are not flagged--they resolve normally via cache or clone.
+
+#### Directory Structure
+
+`aer kits refresh` creates the following structure and manages its `.gitignore` and `.gitattributes` automatically:
+
+```
+.aer/
+  .gitignore          # ignores kits/cached/
+  .gitattributes      # marks kits/vendored/ as -diff, merge=ours
+  kits/
+    cached/           # gitignored; used for non-vendored kits
+    vendored/         # committed; populated by `aer kits refresh`
+      <kit-name>/
+    lockfile.toml     # committed; tracks vendored kit state
+```
+
+The `.aer` directory is excluded from the file watcher in `aer serve`.
 
 ### Output
 
