@@ -24,6 +24,10 @@ jobs:
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
         with:
           toolchain: stable
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install musl tools
+        run: sudo apt-get install -y musl-tools
 
       - name: Cache cargo registry and build
         uses: actions/cache@v4
@@ -46,11 +50,11 @@ jobs:
         run: cargo test
 
       - name: cargo build
-        run: cargo build --release
+        run: cargo build --release --target x86_64-unknown-linux-musl
 
       - name: Release `latest-linux-x86`
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload latest-linux-x86 target/release/aer --clobber ||
-            gh release create latest-linux-x86 target/release/aer --title "Latest Build (Linux x86)" --notes "Built from main branch"
+          gh release upload latest-linux-x86 target/x86_64-unknown-linux-musl/release/aer --clobber ||
+            gh release create latest-linux-x86 target/x86_64-unknown-linux-musl/release/aer --title "Latest Build (Linux x86)" --notes "Built from main branch"
