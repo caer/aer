@@ -222,6 +222,15 @@ fn collect_file_paths<'a>(
     })
 }
 
+/// Resolves a remote ref to its commit hash without cloning.
+async fn git_ls_remote(url: &str, git_ref: &str) -> io::Result<Option<String>> {
+    let mut cmd = Command::new("git");
+    cmd.args(["ls-remote", url, git_ref]);
+    let output = run_cmd(cmd, "git ls-remote failed").await?;
+    // Output format: "<hash>\t<ref>\n" — take the first hash.
+    Ok(output.split_whitespace().next().map(|s| s.to_string()))
+}
+
 /// Fetches a git repository at the given ref using init + fetch + checkout.
 async fn git_fetch(url: &str, git_ref: &str, dest: &Path) -> io::Result<()> {
     let mut cmd = Command::new("git");
@@ -464,8 +473,23 @@ pub async fn refresh_kits(
         {
             let vendored_kit_dir = vendored_dir.join(name);
             if fs::try_exists(&vendored_kit_dir).await? {
-                tracing::info!("Kit `{}`: already up to date", name);
-                continue;
+                // The ref string matches, but for mutable refs (branches) the
+                // upstream commit may have changed. Resolve the remote ref and
+                // compare against the locked commit hash.
+                let remote_commit = git_ls_remote(&kit.git_url, &kit.git_ref).await?;
+                if remote_commit.as_deref() == Some(entry.commit.as_str()) {
+                    tracing::info!("Kit `{}`: already up to date", name);
+                    continue;
+                }
+                tracing::info!(
+                    "Kit `{}`: remote ref updated ({} -> {})",
+                    name,
+                    &entry.commit[..12.min(entry.commit.len())],
+                    remote_commit
+                        .as_deref()
+                        .map(|c| &c[..12.min(c.len())])
+                        .unwrap_or("unknown"),
+                );
             }
         }
 
