@@ -193,6 +193,7 @@ Template expressions are wrapped in `{~ }`. The following expressions are suppor
 
 - `{~ get variable_name}` outputs the value of a variable.
     - An arbitrary number of fallbacks may be specified with `or`: `{~ get title or name or headline}`.
+- `{~ date variable "format"}` parses a date value and formats it with a [chrono strftime](https://docs.rs/chrono/latest/chrono/format/strftime/index.html) format string. Supported input formats: `"2025-04-17"`, `"2025-04-17T00:00:00Z"`. Unparseable values pass through as-is.
 - `{~ if variable_name}...{~ end}` renders content if the variable is truthy (non-empty and not `"false"` or `"0"`)
     - `{~ if not variable_name}...{~ end}` renders content if the variable is _not_ truthy.
 - `{~ if variable_name is "value"}...{~ end}` renders content if the variable equals a specific value.
@@ -202,6 +203,7 @@ Template expressions are wrapped in `{~ }`. The following expressions are suppor
 - `{~ for key, val in table}...{~ end}` iterates over a table's key-value pairs.
     - Each `key` will be text, but each `val` may be a scalar, a table, or a list.
 - `{~ for item in assets "path"}...{~ end}` iterates over assets in a directory, with each item's compiled context accessible as fields.
+    - An optional `sort` clause orders results: `{~ for item in assets "path" sort date desc}`. Supports `asc` (default) and `desc`. Date-aware: parses `YYYY-MM-DD` dates for comparison before falling back to lexicographic ordering.
 - `{~ use "path"}` includes a part by its path (see Asset Writing).
     - Values (including variables) can be injected into the part's context using `with`.
     - This example sets `label` to `"Title"` and `byline` to the value of `author`: `{~ use "path", with "Title" as label, with author as byline}`
@@ -361,9 +363,18 @@ Kits are available to the processing pipeline under the kit's declared name. Eve
 {~ use "withcaer-base/footer" }
 ```
 
-## Color Palettes
+## Tools
 
-### `aer palette` Command
+Tools are configured in `[default.tools]` in `Aer.toml`. Unlike processors (which transform assets in-place), tools generate new assets or context entries for the processing pipeline. 
+
+Tools fall into two categories:
+
+- Interactive tools, which can be run manually via the commandline.
+- Uninteractive tools, which can run automatically as part of the build pipeline. 
+
+For an example of an uninteractive tool, refer to [opengraph.md](opengraph.md).
+
+### `aer palette` Interactive Tool
 
 Generates color palettes using the Oklch color space.
 
@@ -388,7 +399,7 @@ A `Neutrals` palette derives seven shades from a base color:
 A `ColorSystem` provides 9 base colors (neutral, magenta, red, orange, yellow,
 green, cyan, blue, purple) all at lightness `0.58`, with additional derived shades.
 
-### `--troubles` Flag
+## `--troubles` Flag
 
 Every `aer` command accepts a `--troubles` flag. By default, `aer` logs
 high-level information during command execution. When `--troubles` is passed,

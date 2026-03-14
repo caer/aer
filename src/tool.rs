@@ -2,6 +2,7 @@
 
 mod color;
 pub mod kits;
+pub mod opengraph;
 pub mod palette;
 pub mod procs;
 pub mod serve;
@@ -13,6 +14,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use tokio::fs;
 
+use crate::tool::opengraph::OpenGraphConfig;
 use crate::tool::procs::ProcessorConfig;
 
 /// Default configuration profile.
@@ -45,6 +47,9 @@ minify_html = {}
 minify_js = {}
 image = { max_width = 1920, max_height = 1920 }
 favicon = {}
+
+[default.tools]
+opengraph = {}
 
 [production.procs]
 canonicalize = { root = "https://www.example.com/" }
@@ -82,6 +87,8 @@ struct RawConfig {
 pub struct ConfigProfile {
     #[serde(default)]
     procs: BTreeMap<String, ProcessorConfig>,
+    #[serde(default)]
+    tools: ToolsMap,
     #[serde(default)]
     context: toml::Table,
     #[serde(default)]
@@ -122,6 +129,11 @@ impl ConfigProfile {
         // Merge procs
         for (key, value) in &other.procs {
             merged.procs.insert(key.clone(), value.clone());
+        }
+
+        // Merge tools
+        for (key, value) in &other.tools.0 {
+            merged.tools.0.insert(key.clone(), value.clone());
         }
 
         merged
@@ -183,6 +195,42 @@ fn load_config_from_str(
         kits: raw.kits,
         config_dir,
     })
+}
+
+/// Configuration for a single tool in `Aer.toml`.
+///
+/// Each variant maps to a specific tool implementation.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum ToolConfig {
+    OpenGraph(OpenGraphConfig),
+}
+
+/// Newtype around the tools map to enable custom deserialization.
+#[derive(Debug, Clone, Default)]
+pub struct ToolsMap(pub BTreeMap<String, ToolConfig>);
+
+impl<'de> Deserialize<'de> for ToolsMap {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw: BTreeMap<String, toml::Value> = BTreeMap::deserialize(deserializer)?;
+        let mut map = BTreeMap::new();
+        for (key, value) in raw {
+            match key.as_str() {
+                "opengraph" => {
+                    let config: OpenGraphConfig =
+                        value.try_into().map_err(serde::de::Error::custom)?;
+                    map.insert(key, ToolConfig::OpenGraph(config));
+                }
+                _ => {
+                    tracing::warn!("Unknown tool: {}", key);
+                }
+            }
+        }
+        Ok(ToolsMap(map))
+    }
 }
 
 /// Creates a default configuration file in the current directory if one doesn't exist.

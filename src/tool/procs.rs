@@ -27,6 +27,7 @@ use crate::proc::{
 };
 use crate::tool::DEFAULT_CONFIG_FILE;
 use crate::tool::kits::{self, ResolvedKit};
+use crate::tool::{ToolConfig, ToolsMap, opengraph};
 
 /// Path prefix used to identify parts to store in the processing context.
 const PART_PATH_PREFIX: &str = "_";
@@ -79,12 +80,16 @@ pub async fn run(procs_file: Option<&Path>, profile: Option<&str>) -> std::io::R
     })?;
 
     build_assets(
-        source,
-        target,
-        &config.procs,
+        &BuildConfig {
+            source,
+            target,
+            procs: &config.procs,
+            tools: &config.tools,
+            clean_urls,
+            resolved_kits: &resolved_kits,
+            project_root: &loaded.config_dir,
+        },
         &mut proc_context,
-        clean_urls,
-        &resolved_kits,
     )
     .await
 }
@@ -116,20 +121,31 @@ pub async fn collect_assets(
     Ok(())
 }
 
+/// Parameters for [build_assets].
+pub struct BuildConfig<'a> {
+    pub source: &'a Path,
+    pub target: &'a Path,
+    pub procs: &'a BTreeMap<String, ProcessorConfig>,
+    pub tools: &'a ToolsMap,
+    pub clean_urls: bool,
+    pub resolved_kits: &'a [ResolvedKit],
+    pub project_root: &'a Path,
+}
+
 /// Collects, separates, and processes all assets from `source` into `target`.
 ///
 /// Parts (files with `_`-prefixed path components) are cached in `context`
 /// and the remaining assets are processed in parallel passes. Assets that
 /// return [ProcessingError::Deferred] are retried with an enriched context
 /// until all complete or a cycle is detected.
-pub async fn build_assets(
-    source: &Path,
-    target: &Path,
-    procs: &BTreeMap<String, ProcessorConfig>,
-    context: &mut Context,
-    clean_urls: bool,
-    resolved_kits: &[ResolvedKit],
-) -> std::io::Result<()> {
+pub async fn build_assets(config: &BuildConfig<'_>, context: &mut Context) -> std::io::Result<()> {
+    let source = config.source;
+    let target = config.target;
+    let procs = config.procs;
+    let tools = config.tools;
+    let clean_urls = config.clean_urls;
+    let resolved_kits = config.resolved_kits;
+    let project_root = config.project_root;
     // Collect all assets from source directory.
     let mut assets = Vec::new();
     collect_assets(source, &mut assets).await?;
@@ -215,6 +231,60 @@ pub async fn build_assets(
                 }
                 kit_asset_paths.insert(output_path.clone());
                 regular_assets.push((output_path, content));
+            }
+        }
+    }
+
+    // Tool step: extract .aer.toml files, dispatch to tools,
+    // and inject results into context before processing begins.
+    let mut tool_files = Vec::new();
+    regular_assets.retain(|(path, content)| {
+        let filename = path.rsplit('/').next().unwrap_or(path);
+        if filename.ends_with(".aer.toml") {
+            tool_files.push((path.clone(), content.clone()));
+            false
+        } else {
+            true
+        }
+    });
+
+    for (path, content) in &tool_files {
+        let filename = path.rsplit('/').next().unwrap_or(path);
+        let dir = path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+
+        match opengraph::tool_for_filename(filename) {
+            Some("opengraph") => {
+                let content_str = String::from_utf8_lossy(content);
+                let og_config = match tools.0.get("opengraph") {
+                    Some(ToolConfig::OpenGraph(c)) => c.clone(),
+                    _ => Default::default(),
+                };
+
+                match opengraph::resolve(&content_str, &og_config, project_root).await {
+                    Ok(entries) => {
+                        tracing::info!("Resolved {} entries from {}", entries.len(), path);
+
+                        let key: codas::types::Text =
+                            format!("{}{}", ASSET_PATH_CONTEXT_KEY_PREFIX, dir).into();
+                        match context.get_mut(&key) {
+                            Some(ContextValue::List(items)) => {
+                                for entry in entries {
+                                    items.push(ContextValue::Table(entry));
+                                }
+                            }
+                            _ => {
+                                let items = entries.into_iter().map(ContextValue::Table).collect();
+                                context.insert(key, ContextValue::List(items));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Tool failed for {}: {}", path, e);
+                    }
+                }
+            }
+            _ => {
+                tracing::warn!("No tool found for {}", path);
             }
         }
     }

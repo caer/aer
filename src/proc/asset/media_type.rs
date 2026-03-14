@@ -19,6 +19,7 @@ macros::media_types! {
     (Markdown, "text/markdown", ["md", "markdown"]),
     (Png, "image/png", ["png"]),
     (Scss, "text/x-scss", ["scss"]),
+    (Toml, "text/toml", ["toml"]),
     (Webp, "image/webp", ["webp"]),
 }
 

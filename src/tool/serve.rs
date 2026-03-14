@@ -4,14 +4,12 @@ mod server;
 mod watcher;
 
 use std::path::Path;
-use std::sync::Arc;
-
 use tokio::sync::mpsc;
 
 use crate::proc::context_from_toml;
 use crate::tool::DEFAULT_CONFIG_FILE;
-use crate::tool::kits::{self, ResolvedKit};
-use crate::tool::procs::{ProcessorConfig, build_assets};
+use crate::tool::kits;
+use crate::tool::procs::{BuildConfig, build_assets};
 
 /// Runs the development server with file watching.
 pub async fn run(port: u16, profile: Option<&str>) -> std::io::Result<()> {
@@ -39,17 +37,21 @@ pub async fn run(port: u16, profile: Option<&str>) -> std::io::Result<()> {
     // Resolve kits once at startup.
     let resolved_kits = kits::resolve_kits(&loaded.kits, &loaded.config_dir).await?;
 
+    // Build configuration shared across rebuilds.
+    let project_root = loaded.config_dir;
+    let build_config = BuildConfig {
+        source: &source,
+        target: &target,
+        procs: &config.procs,
+        tools: &config.tools,
+        clean_urls,
+        resolved_kits: &resolved_kits,
+        project_root: &project_root,
+    };
+
     // Run initial build.
     tracing::info!("Running initial build...");
-    build(
-        &source,
-        &target,
-        &config.procs,
-        &config.context,
-        clean_urls,
-        &resolved_kits,
-    )
-    .await?;
+    build(&build_config, &config.context).await?;
 
     // Create channel for rebuild signals.
     let (rebuild_tx, mut rebuild_rx) = mpsc::channel::<()>(1);
@@ -70,19 +72,9 @@ pub async fn run(port: u16, profile: Option<&str>) -> std::io::Result<()> {
     tracing::info!("Server running at http://localhost:{}", port);
 
     // Watch for rebuild signals.
-    let config = Arc::new(config);
     while rebuild_rx.recv().await.is_some() {
         tracing::info!("Change detected, rebuilding...");
-        match build(
-            &source,
-            &target,
-            &config.procs,
-            &config.context,
-            clean_urls,
-            &resolved_kits,
-        )
-        .await
-        {
+        match build(&build_config, &config.context).await {
             Ok(()) => tracing::info!("Rebuild complete"),
             Err(e) => tracing::error!("Rebuild failed: {}", e),
         }
@@ -95,14 +87,7 @@ pub async fn run(port: u16, profile: Option<&str>) -> std::io::Result<()> {
 }
 
 /// Builds all assets from source to target.
-async fn build(
-    source: &Path,
-    target: &Path,
-    procs: &std::collections::BTreeMap<String, ProcessorConfig>,
-    context_values: &toml::Table,
-    clean_urls: bool,
-    resolved_kits: &[ResolvedKit],
-) -> std::io::Result<()> {
+async fn build(config: &BuildConfig<'_>, context_values: &toml::Table) -> std::io::Result<()> {
     let mut context = context_from_toml(context_values.clone()).map_err(|e| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -110,13 +95,5 @@ async fn build(
         )
     })?;
 
-    build_assets(
-        source,
-        target,
-        procs,
-        &mut context,
-        clean_urls,
-        resolved_kits,
-    )
-    .await
+    build_assets(config, &mut context).await
 }

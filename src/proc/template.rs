@@ -1,3 +1,4 @@
+use chrono::NaiveDate;
 use codas::types::Text;
 use logos::{Lexer, Logos, Span};
 
@@ -239,6 +240,36 @@ impl TemplateProcessor {
                             output.push_str(&value);
                         }
 
+                        // Date formatting: {~ date variable "format" }
+                        // Parses the variable as a date, then formats it
+                        // using a chrono strftime format string.
+                        "date" => {
+                            let identifier = args
+                                .first()
+                                .ok_or(ProcessingError::Compilation {
+                                    message: "missing variable identifier in date expression"
+                                        .into(),
+                                })?
+                                .try_as_identifier()?;
+
+                            let format = args
+                                .get(1)
+                                .ok_or(ProcessingError::Compilation {
+                                    message: "missing format string in date expression".into(),
+                                })?
+                                .try_as_string()?;
+
+                            if let Some(ContextValue::Text(raw)) =
+                                Self::resolve_dotted(context, &identifier)
+                            {
+                                if let Some(date) = Self::parse_date(raw) {
+                                    output.push_str(&date.format(format.as_str()).to_string());
+                                } else {
+                                    output.push_str(raw);
+                                }
+                            }
+                        }
+
                         // If statement:
                         //   {~ if [not] condition } ... {~ end }
                         //   {~ if var is [not] value } ... {~ end }
@@ -444,9 +475,9 @@ impl TemplateProcessor {
                                     .and_then(|a| a.try_as_identifier().ok())
                                     .is_some_and(|id| id == "in");
 
-                            // Detect assets query form: item, in, assets, "path"
+                            // Detect assets query form: item, in, assets, "path" [sort key [asc|desc]]
                             let is_assets_query = !is_kv_form
-                                && args.len() == 4
+                                && args.len() >= 4
                                 && args
                                     .get(1)
                                     .and_then(|a| a.try_as_identifier().ok())
@@ -488,47 +519,108 @@ impl TemplateProcessor {
                                     }
                                 }
 
-                            // Path query: {~ for item in assets "path" }
+                            // Path query:
+                            //   {~ for item in assets "path" [sort key [asc|desc]] }
                             } else if is_assets_query {
                                 let item_identifier = first;
                                 let dir_path = args[3].try_as_string()?;
                                 let assets_key: Text =
                                     format!("{}{}", ASSET_PATH_CONTEXT_KEY_PREFIX, dir_path).into();
 
-                                match context.get(&assets_key) {
-                                    // Assets have completed — iterate them.
-                                    Some(ContextValue::List(items)) if !items.is_empty() => {
-                                        let block_text = &lexer.source()[block_span];
+                                // Parse optional sort clause.
+                                let sort_clause = if args.len() >= 6
+                                    && args
+                                        .get(4)
+                                        .and_then(|a| a.try_as_identifier().ok())
+                                        .is_some_and(|id| id == "sort")
+                                {
+                                    let sort_key = args[5].try_as_identifier()?;
+                                    let descending = args
+                                        .get(6)
+                                        .and_then(|a| a.try_as_identifier().ok())
+                                        .is_some_and(|id| id == "desc");
+                                    Some((sort_key, descending))
+                                } else {
+                                    None
+                                };
 
-                                        for item in items {
-                                            let mut loop_context = context.clone();
-                                            loop_context
-                                                .insert(item_identifier.clone(), item.clone());
+                                // Collect items from the exact path and all
+                                // subdirectories (e.g., "logs" also gathers
+                                // from "logs/ldjam-57", "logs/guide-to-ai", etc.).
+                                let prefix: Text =
+                                    format!("{}{}/", ASSET_PATH_CONTEXT_KEY_PREFIX, dir_path)
+                                        .into();
+                                let mut all_items: Vec<ContextValue> = Vec::new();
+                                let mut path_exists = false;
+                                let mut has_pending = false;
 
-                                            let mut block_lexer = Token::lexer(block_text);
-                                            Self::compile_template(
-                                                &loop_context,
-                                                &mut block_lexer,
-                                                output,
-                                            )?;
+                                for (key, value) in context.iter() {
+                                    if *key == assets_key || key.starts_with(prefix.as_str()) {
+                                        path_exists = true;
+                                        if let ContextValue::List(items) = value {
+                                            if items.is_empty() {
+                                                // A seeded-but-empty list means assets
+                                                // in this directory haven't completed yet.
+                                                has_pending = true;
+                                            } else {
+                                                all_items.extend(items.iter().cloned());
+                                            }
                                         }
                                     }
+                                }
 
-                                    // Path exists but no assets have completed yet.
-                                    Some(ContextValue::List(_)) => {
-                                        return Err(ProcessingError::Deferred);
-                                    }
+                                if has_pending {
+                                    // At least one matching subdirectory still
+                                    // has assets in flight — wait for them.
+                                    return Err(ProcessingError::Deferred);
+                                } else if !all_items.is_empty() {
+                                    let block_text = &lexer.source()[block_span];
 
-                                    // Path does not exist.
-                                    _ => {
-                                        return Err(ProcessingError::Compilation {
-                                            message: format!(
-                                                "no assets found at path: {}",
-                                                dir_path
-                                            )
-                                            .into(),
+                                    let items = if let Some((sort_key, descending)) = &sort_clause {
+                                        // Schwartzian transform: parse sort keys
+                                        // once rather than on every comparison.
+                                        let mut keyed: Vec<_> = all_items
+                                            .into_iter()
+                                            .map(|item| {
+                                                let raw = Self::extract_sort_value(&item, sort_key);
+                                                let parsed =
+                                                    raw.as_deref().and_then(Self::parse_date);
+                                                (parsed, raw, item)
+                                            })
+                                            .collect();
+                                        keyed.sort_by(|(ad, ar, _), (bd, br, _)| {
+                                            let cmp = match (ad, bd) {
+                                                (Some(a), Some(b)) => a.cmp(b),
+                                                (Some(_), None) => std::cmp::Ordering::Less,
+                                                (None, Some(_)) => std::cmp::Ordering::Greater,
+                                                (None, None) => ar.cmp(br),
+                                            };
+                                            if *descending { cmp.reverse() } else { cmp }
                                         });
+                                        keyed.into_iter().map(|(_, _, item)| item).collect()
+                                    } else {
+                                        all_items
+                                    };
+
+                                    for item in &items {
+                                        let mut loop_context = context.clone();
+                                        loop_context.insert(item_identifier.clone(), item.clone());
+
+                                        let mut block_lexer = Token::lexer(block_text);
+                                        Self::compile_template(
+                                            &loop_context,
+                                            &mut block_lexer,
+                                            output,
+                                        )?;
                                     }
+                                } else if path_exists {
+                                    // Path(s) exist but no assets have completed yet.
+                                    return Err(ProcessingError::Deferred);
+                                } else {
+                                    return Err(ProcessingError::Compilation {
+                                        message: format!("no assets found at path: {}", dir_path)
+                                            .into(),
+                                    });
                                 }
 
                             // List iteration: {~ for item in collection }
@@ -654,6 +746,26 @@ impl TemplateProcessor {
             )
             .into(),
         })
+    }
+
+    /// Extracts a string value from a context value for sort comparison.
+    fn extract_sort_value(value: &ContextValue, key: &str) -> Option<String> {
+        match value {
+            ContextValue::Table(table) => {
+                let k: Text = key.into();
+                match table.get(&k) {
+                    Some(ContextValue::Text(t)) => Some(t.to_string()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Parses a `YYYY-MM-DD` date, with or without a trailing time component.
+    fn parse_date(s: &str) -> Option<NaiveDate> {
+        let date_part = s.trim().split('T').next()?;
+        NaiveDate::parse_from_str(date_part, "%Y-%m-%d").ok()
     }
 }
 
@@ -1673,5 +1785,188 @@ prod = "https://example.com"
             asset.as_text().unwrap(),
             "<a href=\"https://example.com/posts/my-post/\">My Post</a>\n"
         );
+    }
+
+    #[test]
+    fn for_assets_query_defers_when_subdirectory_pending() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ for post in assets "logs"}{~ get post.title}{~ end}"#
+                .as_bytes()
+                .to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx = Context::default();
+        // Hydrated entries already present at the root path.
+        let mut entry = Context::default();
+        entry.insert("title".into(), ContextValue::Text("External".into()));
+        ctx.insert(
+            "_assets:logs".into(),
+            ContextValue::List(vec![ContextValue::Table(entry)]),
+        );
+        // Subdirectory seeded but empty (articles still processing).
+        ctx.insert("_assets:logs/my-article".into(), ContextValue::List(vec![]));
+
+        let result = TemplateProcessor.process(&test_env(), &mut ctx, &mut asset);
+        assert_eq!(result, Err(ProcessingError::Deferred));
+    }
+
+    #[test]
+    fn for_assets_query_collects_from_subdirectories() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ for post in assets "logs"}{~ get post.title}, {~ end}"#
+                .as_bytes()
+                .to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx = Context::default();
+        // Entry at root path (e.g., from hydration).
+        let mut external = Context::default();
+        external.insert("title".into(), ContextValue::Text("External".into()));
+        ctx.insert(
+            "_assets:logs".into(),
+            ContextValue::List(vec![ContextValue::Table(external)]),
+        );
+        // Entry in a subdirectory (e.g., completed article).
+        let mut article = Context::default();
+        article.insert("title".into(), ContextValue::Text("Article".into()));
+        ctx.insert(
+            "_assets:logs/my-article".into(),
+            ContextValue::List(vec![ContextValue::Table(article)]),
+        );
+
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
+        // Both entries should appear (order is BTreeMap key order).
+        assert_eq!(asset.as_text().unwrap(), "External, Article, ");
+    }
+
+    #[test]
+    fn for_assets_sort_date_desc() {
+        let template = r#"{~ for item in assets "logs" sort date desc}{~ get item.title}: {~ get item.date}
+{~ end}"#;
+        let mut asset = Asset::new("index.html".into(), template.as_bytes().to_vec());
+        asset.set_media_type(MediaType::Html);
+
+        let mut entry1 = Context::default();
+        entry1.insert("title".into(), ContextValue::Text("Old Post".into()));
+        entry1.insert("date".into(), ContextValue::Text("2023-01-28".into()));
+
+        let mut entry2 = Context::default();
+        entry2.insert("title".into(), ContextValue::Text("New Post".into()));
+        entry2.insert("date".into(), ContextValue::Text("2025-04-17".into()));
+
+        let mut entry3 = Context::default();
+        entry3.insert("title".into(), ContextValue::Text("Mid Post".into()));
+        entry3.insert("date".into(), ContextValue::Text("2025-01-13".into()));
+
+        let mut ctx = Context::default();
+        ctx.insert(
+            "_assets:logs".into(),
+            ContextValue::List(vec![
+                ContextValue::Table(entry1),
+                ContextValue::Table(entry2),
+                ContextValue::Table(entry3),
+            ]),
+        );
+
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
+
+        assert_eq!(
+            asset.as_text().unwrap(),
+            "New Post: 2025-04-17\nMid Post: 2025-01-13\nOld Post: 2023-01-28\n"
+        );
+    }
+
+    #[test]
+    fn for_assets_sort_date_asc() {
+        let template = r#"{~ for item in assets "logs" sort date asc}{~ get item.title}, {~ end}"#;
+        let mut asset = Asset::new("index.html".into(), template.as_bytes().to_vec());
+        asset.set_media_type(MediaType::Html);
+
+        let mut entry1 = Context::default();
+        entry1.insert("title".into(), ContextValue::Text("New".into()));
+        entry1.insert("date".into(), ContextValue::Text("2025-04-17".into()));
+
+        let mut entry2 = Context::default();
+        entry2.insert("title".into(), ContextValue::Text("Old".into()));
+        entry2.insert("date".into(), ContextValue::Text("2023-01-28".into()));
+
+        let mut ctx = Context::default();
+        ctx.insert(
+            "_assets:logs".into(),
+            ContextValue::List(vec![
+                ContextValue::Table(entry1),
+                ContextValue::Table(entry2),
+            ]),
+        );
+
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
+
+        assert_eq!(asset.as_text().unwrap(), "Old, New, ");
+    }
+
+    #[test]
+    fn date_formats_value() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ date mydate "%m.%d.%Y"}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx: Context = [("mydate".into(), ContextValue::Text("2025-04-17".into()))].into();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
+        assert_eq!(asset.as_text().unwrap(), "04.17.2025");
+    }
+
+    #[test]
+    fn date_formats_iso() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ date d "%m.%d.%Y"}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx: Context = [(
+            "d".into(),
+            ContextValue::Text("2025-04-17T00:00:00Z".into()),
+        )]
+        .into();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
+        assert_eq!(asset.as_text().unwrap(), "04.17.2025");
+    }
+
+    #[test]
+    fn date_passes_through_unparseable() {
+        let mut asset = Asset::new(
+            "test.html".into(),
+            r#"{~ date d "%m.%d.%Y"}"#.as_bytes().to_vec(),
+        );
+        asset.set_media_type(MediaType::Html);
+
+        let mut ctx: Context = [("d".into(), ContextValue::Text("not a date".into()))].into();
+        TemplateProcessor
+            .process(&test_env(), &mut ctx, &mut asset)
+            .unwrap();
+        assert_eq!(asset.as_text().unwrap(), "not a date");
+    }
+
+    #[test]
+    fn parse_date_formats() {
+        assert!(TemplateProcessor::parse_date("2025-04-17").is_some());
+        assert!(TemplateProcessor::parse_date("2025-04-17T00:00:00Z").is_some());
+        assert!(TemplateProcessor::parse_date("not a date").is_none());
     }
 }
