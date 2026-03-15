@@ -137,16 +137,7 @@ impl ProcessesAssets for JsBundleProcessor {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
-
-    fn test_env() -> Environment {
-        Environment {
-            source_root: PathBuf::from("."),
-            kit_imports: Default::default(),
-        }
-    }
 
     #[test]
     fn skips_non_javascript_assets() {
@@ -156,7 +147,11 @@ mod tests {
         let mut css_asset = Asset::new("style.css".into(), "body {}".as_bytes().to_vec());
 
         // Processing should succeed (skip) without errors.
-        let result = processor.process(&test_env(), &mut Context::default(), &mut css_asset);
+        let result = processor.process(
+            &Environment::test(),
+            &mut Context::default(),
+            &mut css_asset,
+        );
         assert!(result.is_ok());
     }
 
@@ -168,7 +163,8 @@ mod tests {
         let mut js_asset = Asset::new("test/js_bundle/entry.js".into(), "".as_bytes().to_vec());
 
         // Process the asset.
-        let result = processor.process(&test_env(), &mut Context::default(), &mut js_asset);
+        let result =
+            processor.process(&Environment::test(), &mut Context::default(), &mut js_asset);
         assert!(result.is_ok());
 
         // Check that the bundled code contains content from the entry point

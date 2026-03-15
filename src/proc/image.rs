@@ -82,16 +82,7 @@ impl ProcessesAssets for ImageResizeProcessor {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
-
-    fn test_env() -> Environment {
-        Environment {
-            source_root: PathBuf::from("."),
-            kit_imports: Default::default(),
-        }
-    }
 
     #[test_log::test]
     #[test_log(default_log_filter = "debug")]
@@ -109,7 +100,7 @@ mod tests {
         // Resize the image.
         let (width, height) = (300, 300);
         ImageResizeProcessor { width, height }
-            .process(&test_env(), &mut Context::default(), &mut asset)
+            .process(&Environment::test(), &mut Context::default(), &mut asset)
             .unwrap();
 
         // Check the dimensions of the resized image.

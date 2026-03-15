@@ -61,16 +61,7 @@ impl ProcessesAssets for MinifyJsProcessor {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
-
-    fn test_env() -> Environment {
-        Environment {
-            source_root: PathBuf::from("."),
-            kit_imports: Default::default(),
-        }
-    }
 
     #[test]
     fn minifies_js() {
@@ -84,7 +75,7 @@ mod tests {
         "#;
         let mut asset = Asset::new("script.js".into(), js.as_bytes().to_vec());
         MinifyJsProcessor
-            .process(&test_env(), &mut Context::default(), &mut asset)
+            .process(&Environment::test(), &mut Context::default(), &mut asset)
             .unwrap();
 
         let result = asset.as_text().unwrap();
@@ -102,7 +93,7 @@ mod tests {
     fn skips_non_js() {
         let mut asset = Asset::new("index.html".into(), b"<html></html>".to_vec());
         MinifyJsProcessor
-            .process(&test_env(), &mut Context::default(), &mut asset)
+            .process(&Environment::test(), &mut Context::default(), &mut asset)
             .unwrap();
         assert_eq!(asset.as_text().unwrap(), "<html></html>");
     }
@@ -112,7 +103,7 @@ mod tests {
         let js = "function test(){console.log('already minified')}";
         let mut asset = Asset::new("vendor.min.js".into(), js.as_bytes().to_vec());
         MinifyJsProcessor
-            .process(&test_env(), &mut Context::default(), &mut asset)
+            .process(&Environment::test(), &mut Context::default(), &mut asset)
             .unwrap();
         // Content should be unchanged.
         assert_eq!(asset.as_text().unwrap(), js);

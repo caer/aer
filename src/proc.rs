@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::RwLock;
 
 use codas::types::Text;
 
@@ -16,10 +17,24 @@ pub mod scss;
 pub mod template;
 
 /// Build-time system state shared across all processors.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Environment {
     pub source_root: PathBuf,
     pub kit_imports: BTreeMap<String, PathBuf>,
+    /// Maps asset input paths to their final output paths.
+    /// Populated during processing; used to resolve [ContextValue::AssetRef].
+    pub asset_outputs: RwLock<BTreeMap<String, String>>,
+}
+
+#[cfg(test)]
+impl Environment {
+    pub fn test() -> Self {
+        Self {
+            source_root: std::path::PathBuf::from("."),
+            kit_imports: Default::default(),
+            asset_outputs: RwLock::new(BTreeMap::new()),
+        }
+    }
 }
 
 /// A thing that processes [Asset]s.
@@ -42,6 +57,9 @@ pub enum ContextValue {
     Text(Text),
     List(Vec<ContextValue>),
     Table(Context),
+    /// A reference to another asset by its input path.
+    /// Resolves to the asset's final output path during template rendering.
+    AssetRef(Text),
 }
 
 /// Converts a TOML table into a processing [Context].
@@ -87,8 +105,4 @@ pub enum ProcessingError {
     /// An error occurred while compiling an asset
     /// via a processor.
     Compilation { message: Text },
-
-    /// The processor cannot complete until other
-    /// assets in the current pass have been processed.
-    Deferred,
 }

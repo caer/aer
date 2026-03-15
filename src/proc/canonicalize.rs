@@ -260,16 +260,7 @@ impl ProcessesAssets for CanonicalizeProcessor {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
-
-    fn test_env() -> Environment {
-        Environment {
-            source_root: PathBuf::from("."),
-            kit_imports: Default::default(),
-        }
-    }
 
     fn processor() -> CanonicalizeProcessor {
         CanonicalizeProcessor::new("https://example.com").unwrap()
@@ -405,7 +396,7 @@ mod tests {
     fn skips_non_html_css_assets() {
         let p = processor();
         let mut asset = Asset::new("script.js".into(), b"const x = '/api'".to_vec());
-        p.process(&test_env(), &mut Context::default(), &mut asset)
+        p.process(&Environment::test(), &mut Context::default(), &mut asset)
             .unwrap();
         assert_eq!(asset.as_text().unwrap(), "const x = '/api'");
     }
@@ -418,7 +409,7 @@ mod tests {
             b"@font-face { src: url('/fonts/test.ttf'); }".to_vec(),
         );
         assert_eq!(asset.media_type(), &MediaType::Css);
-        p.process(&test_env(), &mut Context::default(), &mut asset)
+        p.process(&Environment::test(), &mut Context::default(), &mut asset)
             .unwrap();
         assert_eq!(
             asset.as_text().unwrap(),
@@ -433,7 +424,7 @@ mod tests {
             "/blog/posts/article.html".into(),
             b"<a href=\"../index.html\">Back</a>".to_vec(),
         );
-        p.process(&test_env(), &mut Context::default(), &mut asset)
+        p.process(&Environment::test(), &mut Context::default(), &mut asset)
             .unwrap();
         assert!(
             asset

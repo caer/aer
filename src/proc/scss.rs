@@ -123,16 +123,7 @@ impl grass::Fs for KitFs {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
-
-    fn test_env() -> Environment {
-        Environment {
-            source_root: PathBuf::from("."),
-            kit_imports: BTreeMap::new(),
-        }
-    }
 
     #[test]
     fn processes_scss() {
@@ -147,7 +138,7 @@ body {
 "#;
         let mut asset = Asset::new("styles.scss".into(), scss.as_bytes().to_vec());
         ScssProcessor {}
-            .process(&test_env(), &mut Context::default(), &mut asset)
+            .process(&Environment::test(), &mut Context::default(), &mut asset)
             .unwrap();
 
         assert_eq!(
@@ -175,7 +166,7 @@ nav {
 "#;
         let mut asset = Asset::new("nav.scss".into(), scss.as_bytes().to_vec());
         ScssProcessor {}
-            .process(&test_env(), &mut Context::default(), &mut asset)
+            .process(&Environment::test(), &mut Context::default(), &mut asset)
             .unwrap();
 
         assert_eq!(

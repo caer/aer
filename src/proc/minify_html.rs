@@ -43,16 +43,7 @@ impl ProcessesAssets for MinifyHtmlProcessor {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
-
-    fn test_env() -> Environment {
-        Environment {
-            source_root: PathBuf::from("."),
-            kit_imports: Default::default(),
-        }
-    }
 
     #[test]
     fn minifies_html() {
@@ -70,7 +61,7 @@ mod tests {
         "#;
         let mut asset = Asset::new("test.html".into(), html.as_bytes().to_vec());
         MinifyHtmlProcessor
-            .process(&test_env(), &mut Context::default(), &mut asset)
+            .process(&Environment::test(), &mut Context::default(), &mut asset)
             .unwrap();
 
         let result = asset.as_text().unwrap();
@@ -83,7 +74,7 @@ mod tests {
     fn skips_non_html() {
         let mut asset = Asset::new("style.css".into(), b"body { }".to_vec());
         MinifyHtmlProcessor
-            .process(&test_env(), &mut Context::default(), &mut asset)
+            .process(&Environment::test(), &mut Context::default(), &mut asset)
             .unwrap();
         assert_eq!(asset.as_text().unwrap(), "body { }");
     }

@@ -59,6 +59,21 @@ Fetched metadata is cached at `.aer/opengraph-cache.toml`. Entries are fresh for
 
 On fetch failure with a stale cache entry, the stale data is used with a warning. On fetch failure with no cache, any explicit TOML values are used.
 
+## Image Vendoring
+
+Remote `og:image` URLs are automatically downloaded and cached at `.aer/tools/opengraph/images`. Cached images are injected into the asset processing pipeline as regular assets, so they pass through all configured processors (e.g., image resizing). The `image` context key is rewritten to the local path (e.g., `/opengraph/a1b2c3d4e5f6g7h8.jpg`).
+
+This ensures the built site is fully self-hosted — no external image origins are referenced at runtime. Image filenames are derived from a hash of the source URL, so they're stable across builds. The file extension is determined from the HTTP `Content-Type` header, falling back to the URL path extension or `.jpg`.
+
+The output directory defaults to `opengraph/` and can be configured:
+
+```toml
+[default.tools]
+opengraph = { images_target = "og-images" }
+```
+
+Local image paths (non-HTTP URLs) in TOML overrides are passed through unchanged.
+
 ## Template Usage
 
 Resolved entries appear in `_assets:` queries like any other asset:

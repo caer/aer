@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use tokio::fs;
 
@@ -34,6 +34,18 @@ const PART_PATH_PREFIX: &str = "_";
 
 /// Prefix used to store completed asset metadata in the processing context.
 pub const ASSET_PATH_CONTEXT_KEY_PREFIX: &str = "_assets:";
+
+/// Appends a value to the `_assets:` list at `key`, creating it if absent.
+fn context_push_asset(context: &mut Context, key: codas::types::Text, value: ContextValue) {
+    match context.get_mut(&key) {
+        Some(ContextValue::List(items)) => {
+            items.push(value);
+        }
+        _ => {
+            context.insert(key, ContextValue::List(vec![value]));
+        }
+    }
+}
 
 /// Returns true if the path represents a part.
 pub fn is_part(path: &str) -> bool {
@@ -135,9 +147,8 @@ pub struct BuildConfig<'a> {
 /// Collects, separates, and processes all assets from `source` into `target`.
 ///
 /// Parts (files with `_`-prefixed path components) are cached in `context`
-/// and the remaining assets are processed in parallel passes. Assets that
-/// return [ProcessingError::Deferred] are retried with an enriched context
-/// until all complete or a cycle is detected.
+/// and the remaining assets are processed in a convergence loop: all assets
+/// are processed in parallel, then reprocessed until outputs stabilize.
 pub async fn build_assets(config: &BuildConfig<'_>, context: &mut Context) -> std::io::Result<()> {
     let source = config.source;
     let target = config.target;
@@ -163,6 +174,7 @@ pub async fn build_assets(config: &BuildConfig<'_>, context: &mut Context) -> st
             .iter()
             .map(|kit| (kit.name.clone(), kit.local_path.clone()))
             .collect(),
+        asset_outputs: RwLock::new(BTreeMap::new()),
     });
 
     // Separate parts from regular assets and cache them in context.
@@ -248,6 +260,9 @@ pub async fn build_assets(config: &BuildConfig<'_>, context: &mut Context) -> st
         }
     });
 
+    // Resolved tool entries, keyed by _assets: key, for replay in the convergence loop.
+    let mut tool_entries: Vec<(codas::types::Text, Vec<Context>)> = Vec::new();
+
     for (path, content) in &tool_files {
         let filename = path.rsplit('/').next().unwrap_or(path);
         let dir = path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
@@ -261,21 +276,23 @@ pub async fn build_assets(config: &BuildConfig<'_>, context: &mut Context) -> st
                 };
 
                 match opengraph::resolve(&content_str, &og_config, project_root).await {
-                    Ok(entries) => {
-                        tracing::info!("Resolved {} entries from {}", entries.len(), path);
+                    Ok(result) => {
+                        tracing::info!("Resolved {} entries from {}", result.entries.len(), path);
 
                         let key: codas::types::Text =
                             format!("{}{}", ASSET_PATH_CONTEXT_KEY_PREFIX, dir).into();
-                        match context.get_mut(&key) {
-                            Some(ContextValue::List(items)) => {
-                                for entry in entries {
-                                    items.push(ContextValue::Table(entry));
-                                }
-                            }
-                            _ => {
-                                let items = entries.into_iter().map(ContextValue::Table).collect();
-                                context.insert(key, ContextValue::List(items));
-                            }
+                        for entry in &result.entries {
+                            context_push_asset(
+                                context,
+                                key.clone(),
+                                ContextValue::Table(entry.clone()),
+                            );
+                        }
+                        tool_entries.push((key, result.entries));
+
+                        // Inject vendored images as regular assets for processing.
+                        for image in result.images {
+                            regular_assets.push(image);
                         }
                     }
                     Err(e) => {
@@ -289,33 +306,21 @@ pub async fn build_assets(config: &BuildConfig<'_>, context: &mut Context) -> st
         }
     }
 
-    // Seed empty asset lists for every path that contains
-    // regular assets. This lets path queries distinguish "path
-    // exists but nothing has completed yet" (Deferred) from
-    // "path does not exist" (error).
-    for (relative_path, _) in &regular_assets {
-        let dir = relative_path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
-        let key: codas::types::Text = format!("{}{}", ASSET_PATH_CONTEXT_KEY_PREFIX, dir).into();
-        context
-            .entry(key)
-            .or_insert_with(|| ContextValue::List(vec![]));
-    }
-
-    // Process assets in parallel passes.
+    // Process all assets in a convergence loop: process everything,
+    // then reprocess until asset outputs stabilize.
     let procs = Arc::new(procs.clone());
     let target = Arc::new(target.to_path_buf());
-    let mut pending_assets = regular_assets;
-    let mut passes_without_progress = 0;
-    let mut success_count = 0;
-    let mut error_count = 0;
-    loop {
-        if pending_assets.is_empty() {
-            break;
-        }
+    let mut error_count;
+    let max_passes = 10;
 
-        let prev_pending_assets = pending_assets.len();
+    for pass in 0..max_passes {
+        // Snapshot current asset_outputs to detect changes after this pass.
+        let outputs_before = env.asset_outputs.read().unwrap().clone();
+
+        // Process all assets using the current context, which includes
+        // results from the previous pass (or tool-injected entries on pass 0).
         let shared_context = Arc::new(context.clone());
-        let handles: Vec<_> = pending_assets
+        let handles: Vec<_> = regular_assets
             .iter()
             .map(|(relative_path, content)| {
                 let procs = Arc::clone(&procs);
@@ -333,33 +338,17 @@ pub async fn build_assets(config: &BuildConfig<'_>, context: &mut Context) -> st
             })
             .collect();
 
-        let mut deferred_paths: std::collections::BTreeSet<String> =
-            std::collections::BTreeSet::new();
+        let mut success_count = 0;
+        error_count = 0;
+
+        // Collect results into a temporary list, then rebuild context.
+        let mut pass_results: Vec<(String, Context)> = Vec::new();
 
         for handle in handles {
             match handle.await {
-                Ok((path, Ok(ProcResult::Complete { context: asset_ctx }))) => {
+                Ok((path, Ok(asset_ctx))) => {
                     success_count += 1;
-
-                    // Group the completed asset's context by directory
-                    // so that path queries can iterate it.
-                    let dir = path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
-                    let key: codas::types::Text =
-                        format!("{}{}", ASSET_PATH_CONTEXT_KEY_PREFIX, dir).into();
-                    match context.get_mut(&key) {
-                        Some(ContextValue::List(items)) => {
-                            items.push(ContextValue::Table(asset_ctx));
-                        }
-                        _ => {
-                            context.insert(
-                                key,
-                                ContextValue::List(vec![ContextValue::Table(asset_ctx)]),
-                            );
-                        }
-                    }
-                }
-                Ok((path, Ok(ProcResult::Deferred))) => {
-                    deferred_paths.insert(path);
+                    pass_results.push((path, asset_ctx));
                 }
                 Ok((path, Err(e))) => {
                     tracing::error!("Error processing {}: {}", path, e);
@@ -372,36 +361,39 @@ pub async fn build_assets(config: &BuildConfig<'_>, context: &mut Context) -> st
             }
         }
 
-        pending_assets.retain(|(path, _)| deferred_paths.contains(path));
+        // Rebuild _assets: context from scratch with this pass's results.
+        context.retain(|key, _| !key.starts_with(ASSET_PATH_CONTEXT_KEY_PREFIX));
 
-        if pending_assets.is_empty() {
+        // Re-inject saved tool entries (opengraph etc.) without re-resolving.
+        for (key, entries) in &tool_entries {
+            let items = entries.iter().cloned().map(ContextValue::Table).collect();
+            context.insert(key.clone(), ContextValue::List(items));
+        }
+
+        // Insert processed asset results into context.
+        for (path, asset_ctx) in pass_results {
+            let dir = path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+            let key: codas::types::Text =
+                format!("{}{}", ASSET_PATH_CONTEXT_KEY_PREFIX, dir).into();
+            context_push_asset(context, key, ContextValue::Table(asset_ctx));
+        }
+
+        // Check if asset outputs changed during this pass.
+        let outputs_after = env.asset_outputs.read().unwrap().clone();
+        let converged = outputs_before == outputs_after;
+
+        tracing::info!(
+            "Pass {}: processed {} assets ({} errors){}",
+            pass + 1,
+            success_count,
+            error_count,
+            if converged { " [converged]" } else { "" }
+        );
+
+        if converged && pass > 0 {
             break;
         }
-
-        // Track consecutive passes where no asset completed.
-        // If N assets are all deferred and none complete
-        // after N passes, they depend on each other cyclically.
-        if pending_assets.len() < prev_pending_assets {
-            passes_without_progress = 0;
-        } else {
-            passes_without_progress += 1;
-        }
-        if passes_without_progress > pending_assets.len() {
-            for (path, _) in &pending_assets {
-                tracing::error!("Asset stuck in deferral cycle: {}", path);
-            }
-            error_count += pending_assets.len();
-            break;
-        }
-
-        tracing::debug!("{} assets deferred, retrying", pending_assets.len());
     }
-
-    tracing::info!(
-        "Processed {} assets ({} errors)",
-        success_count,
-        error_count
-    );
 
     Ok(())
 }
@@ -438,7 +430,7 @@ pub async fn process_asset(
     context: &Context,
     target: &Path,
     clean_urls: bool,
-) -> std::io::Result<ProcResult> {
+) -> std::io::Result<Context> {
     let mut asset = Asset::new(path.into(), content);
     let mut context = context.clone();
 
@@ -492,9 +484,6 @@ pub async fn process_asset(
                     let (modified, result) =
                         run_processor(proc_name, config, env, &mut context, &mut asset);
                     match result {
-                        Err(ProcessingError::Deferred) => {
-                            return Ok(ProcResult::Deferred);
-                        }
                         Err(e) => {
                             tracing::warn!("Processor `{}` failed on {}: {:?}", proc_name, path, e);
                         }
@@ -564,9 +553,6 @@ pub async fn process_asset(
             let (modified, result) =
                 run_processor(proc_name, config, env, &mut context, &mut asset);
             match result {
-                Err(ProcessingError::Deferred) => {
-                    return Ok(ProcResult::Deferred);
-                }
                 Err(e) => {
                     tracing::warn!("Processor `{}` failed on {}: {:?}", proc_name, path, e);
                 }
@@ -630,7 +616,13 @@ pub async fn process_asset(
         );
     }
 
-    Ok(ProcResult::Complete { context })
+    // Record the final output path for AssetRef resolution.
+    env.asset_outputs
+        .write()
+        .unwrap()
+        .insert(path.to_string(), processed_path);
+
+    Ok(context)
 }
 
 /// Runs a single processor against an asset.
@@ -709,15 +701,6 @@ fn rewrite_clean_url_canonical(path: &str) -> String {
     } else {
         path[..path.len() - ".html".len()].to_string() + "/"
     }
-}
-
-/// The outcome of processing a single asset.
-pub enum ProcResult {
-    /// The asset was processed successfully.
-    Complete { context: Context },
-
-    /// The asset cannot complete until other assets finish processing.
-    Deferred,
 }
 
 /// Configuration for a single processor.

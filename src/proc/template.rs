@@ -56,7 +56,7 @@ pub struct TemplateProcessor;
 impl ProcessesAssets for TemplateProcessor {
     fn process(
         &self,
-        _env: &Environment,
+        env: &Environment,
         context: &mut Context,
         asset: &mut Asset,
     ) -> Result<(), ProcessingError> {
@@ -70,7 +70,7 @@ impl ProcessesAssets for TemplateProcessor {
         let template = Self::extract_frontmatter(context, asset.as_text()?);
         let mut lexer = Token::lexer(template);
         let mut output = String::with_capacity(template.len());
-        Self::compile_template(context, &mut lexer, &mut output)?;
+        Self::compile_template(env, context, &mut lexer, &mut output)?;
         asset.replace_with_text(output.into(), asset.media_type().clone());
 
         Ok(())
@@ -156,6 +156,7 @@ impl TemplateProcessor {
     /// Compiles a text template containing zero or more [TemplateExpression]s,
     /// appending the compiled results to `output`.
     fn compile_template(
+        env: &Environment,
         context: &Context,
         lexer: &mut Lexer<Token>,
         output: &mut String,
@@ -205,6 +206,13 @@ impl TemplateProcessor {
                                 match Self::resolve_dotted(context, ident) {
                                     Some(ContextValue::Text(text)) => {
                                         resolved = Some(text.clone());
+                                        break;
+                                    }
+                                    Some(ContextValue::AssetRef(path)) => {
+                                        let outputs = env.asset_outputs.read().unwrap();
+                                        if let Some(output_path) = outputs.get(path.as_str()) {
+                                            resolved = Some(format!("/{}", output_path).into());
+                                        }
                                         break;
                                     }
                                     Some(ContextValue::List(items)) => {
@@ -346,6 +354,7 @@ impl TemplateProcessor {
                                         Some(ContextValue::Text(text)) => {
                                             text != "false" && text != "0" && !text.is_empty()
                                         }
+                                        Some(ContextValue::AssetRef(_)) => true,
                                         Some(ContextValue::List(list)) => !list.is_empty(),
                                         Some(ContextValue::Table(table)) => !table.is_empty(),
                                         None => false,
@@ -360,7 +369,7 @@ impl TemplateProcessor {
                             if should_render {
                                 let block_text = &lexer.source()[block_span];
                                 let mut block_lexer = Token::lexer(block_text);
-                                Self::compile_template(context, &mut block_lexer, output)?;
+                                Self::compile_template(env, context, &mut block_lexer, output)?;
                             }
                         }
 
@@ -453,7 +462,7 @@ impl TemplateProcessor {
 
                             // Compile the part content with the merged context.
                             let mut part_lexer = Token::lexer(body);
-                            Self::compile_template(&part_context, &mut part_lexer, output)?;
+                            Self::compile_template(env, &part_context, &mut part_lexer, output)?;
                         }
 
                         // For loop:
@@ -512,6 +521,7 @@ impl TemplateProcessor {
 
                                         let mut block_lexer = Token::lexer(block_text);
                                         Self::compile_template(
+                                            env,
                                             &loop_context,
                                             &mut block_lexer,
                                             output,
@@ -551,29 +561,16 @@ impl TemplateProcessor {
                                     format!("{}{}/", ASSET_PATH_CONTEXT_KEY_PREFIX, dir_path)
                                         .into();
                                 let mut all_items: Vec<ContextValue> = Vec::new();
-                                let mut path_exists = false;
-                                let mut has_pending = false;
 
                                 for (key, value) in context.iter() {
-                                    if *key == assets_key || key.starts_with(prefix.as_str()) {
-                                        path_exists = true;
-                                        if let ContextValue::List(items) = value {
-                                            if items.is_empty() {
-                                                // A seeded-but-empty list means assets
-                                                // in this directory haven't completed yet.
-                                                has_pending = true;
-                                            } else {
-                                                all_items.extend(items.iter().cloned());
-                                            }
-                                        }
+                                    if (*key == assets_key || key.starts_with(prefix.as_str()))
+                                        && let ContextValue::List(items) = value
+                                    {
+                                        all_items.extend(items.iter().cloned());
                                     }
                                 }
 
-                                if has_pending {
-                                    // At least one matching subdirectory still
-                                    // has assets in flight — wait for them.
-                                    return Err(ProcessingError::Deferred);
-                                } else if !all_items.is_empty() {
+                                if !all_items.is_empty() {
                                     let block_text = &lexer.source()[block_span];
 
                                     let items = if let Some((sort_key, descending)) = &sort_clause {
@@ -608,19 +605,12 @@ impl TemplateProcessor {
 
                                         let mut block_lexer = Token::lexer(block_text);
                                         Self::compile_template(
+                                            env,
                                             &loop_context,
                                             &mut block_lexer,
                                             output,
                                         )?;
                                     }
-                                } else if path_exists {
-                                    // Path(s) exist but no assets have completed yet.
-                                    return Err(ProcessingError::Deferred);
-                                } else {
-                                    return Err(ProcessingError::Compilation {
-                                        message: format!("no assets found at path: {}", dir_path)
-                                            .into(),
-                                    });
                                 }
 
                             // List iteration: {~ for item in collection }
@@ -646,6 +636,7 @@ impl TemplateProcessor {
 
                                         let mut block_lexer = Token::lexer(block_text);
                                         Self::compile_template(
+                                            env,
                                             &loop_context,
                                             &mut block_lexer,
                                             output,
@@ -771,8 +762,6 @@ impl TemplateProcessor {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use crate::proc::{Asset, MediaType};
 
     use super::*;
@@ -801,13 +790,6 @@ mod tests {
         }
     }
 
-    fn test_env() -> Environment {
-        Environment {
-            source_root: PathBuf::from("."),
-            kit_imports: Default::default(),
-        }
-    }
-
     #[test]
     fn processes_if_template() {
         let mut asset = Asset::new(
@@ -818,7 +800,7 @@ mod tests {
 
         let mut ctx: Context = [("is_empty".into(), ContextValue::Text("true".into()))].into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(r#"This is empty!"#, asset.as_text().unwrap());
@@ -835,7 +817,7 @@ mod tests {
         // When is_empty is false, "not is_empty" should render the block.
         let mut ctx: Context = [("is_empty".into(), ContextValue::Text("false".into()))].into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(r#"Not empty!"#, asset.as_text().unwrap());
@@ -852,7 +834,7 @@ mod tests {
         // When is_empty is true, "not is_empty" should NOT render the block.
         let mut ctx: Context = [("is_empty".into(), ContextValue::Text("true".into()))].into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(r#""#, asset.as_text().unwrap());
@@ -869,7 +851,7 @@ mod tests {
         // When variable is missing (falsy), "not missing" should render the block.
         let mut ctx = Context::default();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(r#"Default content"#, asset.as_text().unwrap());
@@ -896,7 +878,7 @@ mod tests {
         )]
         .into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(
@@ -916,7 +898,7 @@ author = "Test"
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(get_text(&ctx, "title"), Some("Hello".into()));
@@ -938,7 +920,7 @@ Body"#;
         let mut asset = Asset::new("page.md".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         let tags = get_list(&ctx, "tags").expect("expected list");
@@ -951,7 +933,7 @@ Body"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert!(ctx.is_empty());
@@ -971,7 +953,7 @@ Body"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(get_text(&ctx, "name"), Some("test".into()));
@@ -991,7 +973,7 @@ active = true
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert!(ctx.contains_key(&"user".into()));
@@ -1008,7 +990,7 @@ a delimiter in it"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         // Should skip - content unchanged, context empty.
@@ -1030,7 +1012,7 @@ a delimiter in it"#;
         );
 
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(
@@ -1053,7 +1035,7 @@ a delimiter in it"#;
         ctx.insert(part_key, ContextValue::Text(part_content.into()));
 
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         // The part's frontmatter is used within the part itself.
@@ -1083,7 +1065,7 @@ a delimiter in it"#;
         );
 
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(
@@ -1104,7 +1086,7 @@ a delimiter in it"#;
         nested.insert("active".into(), ContextValue::Text("true".into()));
         let mut ctx: Context = [("user".into(), ContextValue::Table(nested))].into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "Active!");
@@ -1129,7 +1111,7 @@ a delimiter in it"#;
         );
         let mut ctx: Context = [("data".into(), ContextValue::Table(nested))].into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "a b c ");
@@ -1146,7 +1128,7 @@ a delimiter in it"#;
         outer.insert("b".into(), ContextValue::Table(inner));
         let mut ctx: Context = [("a".into(), ContextValue::Table(outer))].into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "deep");
@@ -1162,7 +1144,7 @@ a delimiter in it"#;
 
         let mut ctx = Context::default();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "{~ get user.missing }");
@@ -1178,7 +1160,7 @@ a delimiter in it"#;
 
         let mut ctx: Context = [("name".into(), ContextValue::Text("Alice".into()))].into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "Alice");
@@ -1198,7 +1180,7 @@ a delimiter in it"#;
         ]
         .into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "Hello");
@@ -1214,7 +1196,7 @@ a delimiter in it"#;
 
         let mut ctx: Context = [("c".into(), ContextValue::Text("third".into()))].into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "third");
@@ -1230,7 +1212,7 @@ a delimiter in it"#;
 
         let mut ctx = Context::default();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "{~ get title or name }");
@@ -1248,7 +1230,7 @@ a delimiter in it"#;
         site.insert("name".into(), ContextValue::Text("My Site".into()));
         let mut ctx: Context = [("site".into(), ContextValue::Table(site))].into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "My Site");
@@ -1260,7 +1242,7 @@ a delimiter in it"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
 
-        let result = TemplateProcessor.process(&test_env(), &mut ctx, &mut asset);
+        let result = TemplateProcessor.process(&Environment::test(), &mut ctx, &mut asset);
         assert!(result.is_err());
     }
 
@@ -1277,7 +1259,7 @@ a delimiter in it"#;
         );
 
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
         assert_eq!(asset.as_text().unwrap(), "<p>Hello</p>");
     }
@@ -1297,7 +1279,7 @@ a delimiter in it"#;
         );
 
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
         assert_eq!(asset.as_text().unwrap(), "<p>By Alice</p>");
     }
@@ -1317,7 +1299,7 @@ a delimiter in it"#;
         );
 
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
         assert_eq!(asset.as_text().unwrap(), "<h1>Welcome</h1><p>Bob</p>");
     }
@@ -1337,7 +1319,7 @@ a delimiter in it"#;
         );
 
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
         assert_eq!(asset.as_text().unwrap(), "<h1>Welcome</h1><p>Bob</p>");
     }
@@ -1355,7 +1337,7 @@ a delimiter in it"#;
         );
 
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
         assert_eq!(asset.as_text().unwrap(), "\n<h1>Override</h1>");
     }
@@ -1377,7 +1359,7 @@ a delimiter in it"#;
         );
 
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
         assert_eq!(asset.as_text().unwrap(), "<span>My Site</span>");
     }
@@ -1406,7 +1388,7 @@ a delimiter in it"#;
         )]
         .into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "Alice: admin\nBob: editor\n");
@@ -1429,7 +1411,7 @@ a delimiter in it"#;
         )]
         .into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "plain text ");
@@ -1451,7 +1433,7 @@ url = "/about"
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(
@@ -1477,7 +1459,7 @@ url = "/about"
         )]
         .into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         let result = asset.as_text().unwrap();
@@ -1502,7 +1484,7 @@ url = "/about"
 
         let mut ctx: Context = [("colors".into(), ContextValue::Table(colors))].into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         // BTreeMap iterates alphabetically.
@@ -1531,7 +1513,7 @@ url = "/about"
 
         let mut ctx: Context = [("people".into(), ContextValue::Table(people))].into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "alice: admin\nbob: editor\n");
@@ -1547,7 +1529,7 @@ url = "/about"
 
         let mut ctx: Context = [("empty".into(), ContextValue::Table(Context::default()))].into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "beforeafter");
@@ -1565,7 +1547,7 @@ prod = "https://example.com"
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(
@@ -1584,7 +1566,7 @@ prod = "https://example.com"
 
         let mut ctx: Context = [("role".into(), ContextValue::Text("admin".into()))].into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "yes");
@@ -1600,7 +1582,7 @@ prod = "https://example.com"
 
         let mut ctx: Context = [("role".into(), ContextValue::Text("editor".into()))].into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "");
@@ -1616,7 +1598,7 @@ prod = "https://example.com"
 
         let mut ctx: Context = [("role".into(), ContextValue::Text("editor".into()))].into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "restricted");
@@ -1632,7 +1614,7 @@ prod = "https://example.com"
 
         let mut ctx: Context = [("role".into(), ContextValue::Text("admin".into()))].into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "");
@@ -1652,7 +1634,7 @@ prod = "https://example.com"
         ]
         .into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "match");
@@ -1668,7 +1650,7 @@ prod = "https://example.com"
 
         let mut ctx = Context::default();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "");
@@ -1684,7 +1666,7 @@ prod = "https://example.com"
 
         let mut ctx = Context::default();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         // Missing variable is not equal to "value", so `is not` renders.
@@ -1692,7 +1674,7 @@ prod = "https://example.com"
     }
 
     #[test]
-    fn for_assets_query_errors_on_unknown_path() {
+    fn for_assets_query_empty_when_unknown_path() {
         let mut asset = Asset::new(
             "test.html".into(),
             r#"{~ for post in assets "blog"}{~ get post.title}{~ end}"#
@@ -1702,12 +1684,14 @@ prod = "https://example.com"
         asset.set_media_type(MediaType::Html);
 
         let mut ctx = Context::default();
-        let result = TemplateProcessor.process(&test_env(), &mut ctx, &mut asset);
-        assert!(matches!(result, Err(ProcessingError::Compilation { .. })));
+        TemplateProcessor
+            .process(&Environment::test(), &mut ctx, &mut asset)
+            .unwrap();
+        assert_eq!(asset.as_text().unwrap(), "");
     }
 
     #[test]
-    fn for_assets_query_defers_when_pending() {
+    fn for_assets_query_produces_empty_when_no_items() {
         let mut asset = Asset::new(
             "test.html".into(),
             r#"{~ for post in assets "blog"}{~ get post.title}{~ end}"#
@@ -1716,12 +1700,14 @@ prod = "https://example.com"
         );
         asset.set_media_type(MediaType::Html);
 
-        // Empty list means the directory exists but no assets have completed.
+        // Empty list means the directory exists but no assets have completed yet.
         let mut ctx = Context::default();
         ctx.insert("_assets:blog".into(), ContextValue::List(vec![]));
 
-        let result = TemplateProcessor.process(&test_env(), &mut ctx, &mut asset);
-        assert_eq!(result, Err(ProcessingError::Deferred));
+        TemplateProcessor
+            .process(&Environment::test(), &mut ctx, &mut asset)
+            .unwrap();
+        assert_eq!(asset.as_text().unwrap(), "");
     }
 
     #[test]
@@ -1749,7 +1735,7 @@ prod = "https://example.com"
         );
 
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
         assert_eq!(asset.as_text().unwrap(), "hello world ");
     }
@@ -1779,7 +1765,7 @@ prod = "https://example.com"
         );
 
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
         assert_eq!(
             asset.as_text().unwrap(),
@@ -1788,7 +1774,7 @@ prod = "https://example.com"
     }
 
     #[test]
-    fn for_assets_query_defers_when_subdirectory_pending() {
+    fn for_assets_query_renders_partial_when_subdirectory_empty() {
         let mut asset = Asset::new(
             "test.html".into(),
             r#"{~ for post in assets "logs"}{~ get post.title}{~ end}"#
@@ -1805,11 +1791,13 @@ prod = "https://example.com"
             "_assets:logs".into(),
             ContextValue::List(vec![ContextValue::Table(entry)]),
         );
-        // Subdirectory seeded but empty (articles still processing).
+        // Subdirectory empty (articles still processing).
         ctx.insert("_assets:logs/my-article".into(), ContextValue::List(vec![]));
 
-        let result = TemplateProcessor.process(&test_env(), &mut ctx, &mut asset);
-        assert_eq!(result, Err(ProcessingError::Deferred));
+        TemplateProcessor
+            .process(&Environment::test(), &mut ctx, &mut asset)
+            .unwrap();
+        assert_eq!(asset.as_text().unwrap(), "External");
     }
 
     #[test]
@@ -1839,7 +1827,7 @@ prod = "https://example.com"
         );
 
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
         // Both entries should appear (order is BTreeMap key order).
         assert_eq!(asset.as_text().unwrap(), "External, Article, ");
@@ -1875,7 +1863,7 @@ prod = "https://example.com"
         );
 
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(
@@ -1908,7 +1896,7 @@ prod = "https://example.com"
         );
 
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
 
         assert_eq!(asset.as_text().unwrap(), "Old, New, ");
@@ -1924,7 +1912,7 @@ prod = "https://example.com"
 
         let mut ctx: Context = [("mydate".into(), ContextValue::Text("2025-04-17".into()))].into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
         assert_eq!(asset.as_text().unwrap(), "04.17.2025");
     }
@@ -1943,7 +1931,7 @@ prod = "https://example.com"
         )]
         .into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
         assert_eq!(asset.as_text().unwrap(), "04.17.2025");
     }
@@ -1958,7 +1946,7 @@ prod = "https://example.com"
 
         let mut ctx: Context = [("d".into(), ContextValue::Text("not a date".into()))].into();
         TemplateProcessor
-            .process(&test_env(), &mut ctx, &mut asset)
+            .process(&Environment::test(), &mut ctx, &mut asset)
             .unwrap();
         assert_eq!(asset.as_text().unwrap(), "not a date");
     }

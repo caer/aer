@@ -67,16 +67,7 @@ impl ProcessesAssets for FaviconProcessor {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
-
-    fn test_env() -> Environment {
-        Environment {
-            source_root: PathBuf::from("."),
-            kit_imports: Default::default(),
-        }
-    }
 
     #[test]
     fn converts_favicon_png_to_ico() {
@@ -89,7 +80,7 @@ mod tests {
 
         // Process the favicon.
         FaviconProcessor
-            .process(&test_env(), &mut Context::default(), &mut asset)
+            .process(&Environment::test(), &mut Context::default(), &mut asset)
             .unwrap();
 
         // Verify the media type changed to ICO.
@@ -112,7 +103,7 @@ mod tests {
 
         // Process should skip this file.
         FaviconProcessor
-            .process(&test_env(), &mut Context::default(), &mut asset)
+            .process(&Environment::test(), &mut Context::default(), &mut asset)
             .unwrap();
 
         // Verify the asset wasn't modified.
