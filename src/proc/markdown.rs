@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use markdown::mdast::{AlignKind, Node};
 use markdown::message::Message;
 
@@ -32,6 +34,8 @@ impl ProcessesAssets for MarkdownProcessor {
             text,
             &markdown::ParseOptions {
                 constructs: markdown::Constructs {
+                    gfm_footnote_definition: true,
+                    gfm_label_start_footnote: true,
                     gfm_table: true,
                     gfm_strikethrough: true,
                     ..markdown::Constructs::default()
@@ -42,7 +46,8 @@ impl ProcessesAssets for MarkdownProcessor {
 
         // Compile the AST into HTML.
         let mut compiled_html = String::with_capacity(text.len());
-        compile_ast_node(None, &ast, &mut compiled_html);
+        let mut footnotes = Footnotes::default();
+        compile_ast_node(None, &ast, &mut compiled_html, &mut footnotes);
 
         // Update the asset's contents and target extension.
         asset.replace_with_text(compiled_html.into(), MediaType::Html);
@@ -52,24 +57,29 @@ impl ProcessesAssets for MarkdownProcessor {
 
 /// Compiles a Markdown AST `node` associated
 /// with an `asset` into `compiled_html`.
-fn compile_ast_node(parent_node: Option<&Node>, node: &Node, compiled_html: &mut String) {
+fn compile_ast_node(
+    parent_node: Option<&Node>,
+    node: &Node,
+    compiled_html: &mut String,
+    footnotes: &mut Footnotes,
+) {
     match node {
         // Document root node.
         Node::Root(_) => {
-            compile_ast_node_children(node, compiled_html);
+            compile_ast_node_children(node, compiled_html, footnotes);
         }
 
         // Paragraphs.
         Node::Paragraph(_) => {
             *compiled_html += "<p>";
-            compile_ast_node_children(node, compiled_html);
+            compile_ast_node_children(node, compiled_html, footnotes);
             *compiled_html += "</p>";
         }
 
         // Blockquotes.
         Node::Blockquote(_) => {
             *compiled_html += "<Blockquote>";
-            compile_ast_node_children(node, compiled_html);
+            compile_ast_node_children(node, compiled_html, footnotes);
             *compiled_html += "</Blockquote>";
         }
 
@@ -81,7 +91,7 @@ fn compile_ast_node(parent_node: Option<&Node>, node: &Node, compiled_html: &mut
                 *compiled_html += "<ul>";
             }
 
-            compile_ast_node_children(node, compiled_html);
+            compile_ast_node_children(node, compiled_html, footnotes);
 
             if list.ordered {
                 *compiled_html += "</ol>";
@@ -93,7 +103,7 @@ fn compile_ast_node(parent_node: Option<&Node>, node: &Node, compiled_html: &mut
         // List items.
         Node::ListItem(_) => {
             *compiled_html += "<li>";
-            compile_ast_node_children(node, compiled_html);
+            compile_ast_node_children(node, compiled_html, footnotes);
             *compiled_html += "</li>";
         }
 
@@ -123,7 +133,7 @@ fn compile_ast_node(parent_node: Option<&Node>, node: &Node, compiled_html: &mut
             *compiled_html += "\">";
 
             // Compile the actual header contents.
-            compile_ast_node_children(node, compiled_html);
+            compile_ast_node_children(node, compiled_html, footnotes);
 
             *compiled_html += "</h";
             *compiled_html += &heading.depth.to_string();
@@ -133,14 +143,14 @@ fn compile_ast_node(parent_node: Option<&Node>, node: &Node, compiled_html: &mut
         // Italic text.
         Node::Emphasis(_) => {
             *compiled_html += "<em>";
-            compile_ast_node_children(node, compiled_html);
+            compile_ast_node_children(node, compiled_html, footnotes);
             *compiled_html += "</em>";
         }
 
         // Bold text.
         Node::Strong(_) => {
             *compiled_html += "<strong>";
-            compile_ast_node_children(node, compiled_html);
+            compile_ast_node_children(node, compiled_html, footnotes);
             *compiled_html += "</strong>";
         }
 
@@ -156,7 +166,7 @@ fn compile_ast_node(parent_node: Option<&Node>, node: &Node, compiled_html: &mut
                 *compiled_html += &title.replace('\"', "&quot;").replace("\\\"", "&quot;");
             }
             *compiled_html += "\">";
-            compile_ast_node_children(node, compiled_html);
+            compile_ast_node_children(node, compiled_html, footnotes);
             *compiled_html += "</a>";
         }
 
@@ -231,18 +241,60 @@ fn compile_ast_node(parent_node: Option<&Node>, node: &Node, compiled_html: &mut
         // GFM strikethrough extension.
         Node::Delete(_) => {
             *compiled_html += "<s>";
-            compile_ast_node_children(node, compiled_html);
+            compile_ast_node_children(node, compiled_html, footnotes);
             *compiled_html += "</s>";
         }
 
         // Definitions are unsupported.
         Node::Definition(_) => unimplemented!("definition"),
 
-        // References are unsupported.
-        Node::FootnoteDefinition(_)
-        | Node::FootnoteReference(_)
-        | Node::LinkReference(_)
-        | Node::ImageReference(_) => unimplemented!("reference"),
+        // Footnote definition: rendered inline by compile_ast_node_children.
+        // This branch handles the content inside the <section> wrapper.
+        Node::FootnoteDefinition(def) => {
+            let idx = footnotes.index_for(&def.identifier);
+            let idx_str = idx.to_string();
+            *compiled_html += "<li id=\"fn-";
+            *compiled_html += &idx_str;
+            *compiled_html += "\">";
+
+            // Compile footnote content.
+            let mut inner = String::new();
+            for child in node.children().unwrap() {
+                compile_ast_node(Some(node), child, &mut inner, footnotes);
+            }
+
+            // Insert the back-link inside the last <p> tag.
+            let backlink = format!(
+                " <a href=\"#fnref-{}\" role=\"doc-backlink\">↩</a>",
+                idx_str
+            );
+            if let Some(pos) = inner.rfind("</p>") {
+                compiled_html.push_str(&inner[..pos]);
+                compiled_html.push_str(&backlink);
+                compiled_html.push_str(&inner[pos..]);
+            } else {
+                compiled_html.push_str(&inner);
+                compiled_html.push_str(&backlink);
+            }
+
+            *compiled_html += "</li>";
+        }
+
+        // Footnote reference: emit a superscript link.
+        Node::FootnoteReference(reference) => {
+            let idx = footnotes.index_for(&reference.identifier);
+            let idx_str = idx.to_string();
+            *compiled_html += "<sup><a id=\"fnref-";
+            *compiled_html += &idx_str;
+            *compiled_html += "\" href=\"#fn-";
+            *compiled_html += &idx_str;
+            *compiled_html += "\" role=\"doc-noteref\">[";
+            *compiled_html += &idx_str;
+            *compiled_html += "]</a></sup>";
+        }
+
+        // Link/image references are unsupported.
+        Node::LinkReference(_) | Node::ImageReference(_) => unimplemented!("reference"),
 
         // GFM table.
         Node::Table(table) => {
@@ -256,7 +308,7 @@ fn compile_ast_node(parent_node: Option<&Node>, node: &Node, compiled_html: &mut
                 if let Node::TableRow(row) = header_node {
                     for (i, cell) in row.children.iter().enumerate() {
                         emit_cell_tag("th", table.align.get(i), compiled_html);
-                        compile_ast_node_children(cell, compiled_html);
+                        compile_ast_node_children(cell, compiled_html, footnotes);
                         *compiled_html += "</th>";
                     }
                 }
@@ -272,7 +324,7 @@ fn compile_ast_node(parent_node: Option<&Node>, node: &Node, compiled_html: &mut
                     if let Node::TableRow(row) = row_node {
                         for (i, cell) in row.children.iter().enumerate() {
                             emit_cell_tag("td", table.align.get(i), compiled_html);
-                            compile_ast_node_children(cell, compiled_html);
+                            compile_ast_node_children(cell, compiled_html, footnotes);
                             *compiled_html += "</td>";
                         }
                     }
@@ -286,7 +338,7 @@ fn compile_ast_node(parent_node: Option<&Node>, node: &Node, compiled_html: &mut
 
         // Table rows and cells are handled by the Table branch above.
         Node::TableRow(_) | Node::TableCell(_) => {
-            compile_ast_node_children(node, compiled_html);
+            compile_ast_node_children(node, compiled_html, footnotes);
         }
 
         // Embedded languages are unsupported.
@@ -299,6 +351,41 @@ fn compile_ast_node(parent_node: Option<&Node>, node: &Node, compiled_html: &mut
         | Node::MdxFlowExpression(_)
         | Node::Toml(_)
         | Node::Yaml(_) => unimplemented!("embedded language"),
+    }
+}
+
+/// Compiles all the children of `node` associated
+/// with an `asset` into `compiled_html`.
+///
+/// Consecutive `FootnoteDefinition` nodes are grouped
+/// into a single `<section class="footnotes">` block.
+fn compile_ast_node_children(node: &Node, compiled_html: &mut String, footnotes: &mut Footnotes) {
+    let children = node.children().unwrap();
+    let mut in_footnote_section = false;
+
+    for child in children {
+        let is_footnote = matches!(child, Node::FootnoteDefinition(_));
+
+        if is_footnote && !in_footnote_section {
+            // Set the `start` attribute so the <ol> numbering
+            // continues from the correct footnote index.
+            if let Node::FootnoteDefinition(def) = child {
+                let start = footnotes.index_for(&def.identifier);
+                *compiled_html += "<section class=\"footnotes\" role=\"doc-endnotes\"><ol start=\"";
+                *compiled_html += &start.to_string();
+                *compiled_html += "\">";
+            }
+            in_footnote_section = true;
+        } else if !is_footnote && in_footnote_section {
+            *compiled_html += "</ol></section>";
+            in_footnote_section = false;
+        }
+
+        compile_ast_node(Some(node), child, compiled_html, footnotes);
+    }
+
+    if in_footnote_section {
+        *compiled_html += "</ol></section>";
     }
 }
 
@@ -315,11 +402,26 @@ fn emit_cell_tag(tag: &str, align: Option<&AlignKind>, compiled_html: &mut Strin
     *compiled_html += ">";
 }
 
-/// Compiles all the children of `node` associated
-/// with an `asset` into `compiled_html`.
-fn compile_ast_node_children(node: &Node, compiled_html: &mut String) {
-    for child in node.children().unwrap() {
-        compile_ast_node(Some(node), child, compiled_html);
+/// Tracks footnote numbering during compilation.
+#[derive(Default)]
+struct Footnotes {
+    /// Maps footnote identifier to its 1-based index.
+    indices: HashMap<String, usize>,
+    /// Counter for assigning footnote numbers.
+    count: usize,
+}
+
+impl Footnotes {
+    /// Returns the 1-based index for a footnote identifier,
+    /// assigning a new one if this is the first reference.
+    fn index_for(&mut self, identifier: &str) -> usize {
+        if let Some(&idx) = self.indices.get(identifier) {
+            idx
+        } else {
+            self.count += 1;
+            self.indices.insert(identifier.to_string(), self.count);
+            self.count
+        }
     }
 }
 
