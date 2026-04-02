@@ -53,11 +53,17 @@ impl JsBundleProcessor {
             })?;
 
         // Use the entry point's parent directory as the working directory
-        // for module resolution. Default to current directory if no parent.
+        // for module resolution. Must be absolute for brk_rolldown's resolver.
         let cwd = entry_path
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
-            .map(|p| p.to_path_buf());
+            .map(|p| {
+                if p.is_absolute() {
+                    p.to_path_buf()
+                } else {
+                    std::env::current_dir().unwrap_or_default().join(p)
+                }
+            });
 
         let input_path = format!("./{}", file_name.to_string_lossy());
 

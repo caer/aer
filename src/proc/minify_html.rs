@@ -1,8 +1,25 @@
-use minify_html_onepass::{Cfg, in_place};
+use lol_html::{RewriteStrSettings, doc_comments, doc_text, rewrite_str};
 
 use super::{Asset, Environment, LayeredContext, MediaType, ProcessesAssets, ProcessingError};
 
-/// Minifies HTML assets by removing unnecessary whitespace and comments.
+/// Minifies HTML assets by removing comments and whitespace-only text nodes.
+///
+/// @caer: todo: At the time of writing, no well-supported HTML minifier
+/// _compatible with the rest of our dependencies_ is available. Specifically,
+/// `minify-html-onepass` isn't compatible. ;~;
+///
+/// Therefore, this is a conservative minifier. A full minifier would also collapse runs of
+/// whitespace within text nodes (e.g. `"hello   world"` → `"hello world"`),
+/// since browsers already collapse them during rendering. However, doing so
+/// correctly requires tracking ancestor context to preserve whitespace in
+/// elements like `<pre>`, `<textarea>`, `<script>`, and `<style>`, as well as
+/// any element styled with `white-space: pre`. lol_html's streaming model does
+/// not expose the ancestor chain for text chunks, and detecting CSS-driven
+/// `white-space` at the HTML level is not feasible.
+///
+/// Rather than risk corrupting preformatted content, we limit ourselves to
+/// safe, context-free transformations: stripping comments and removing text
+/// nodes that contain only whitespace (inter-tag indentation and blank lines).
 pub struct MinifyHtmlProcessor;
 
 impl ProcessesAssets for MinifyHtmlProcessor {
@@ -18,26 +35,33 @@ impl ProcessesAssets for MinifyHtmlProcessor {
 
         tracing::trace!("minify_html: {}", asset.path());
 
-        let mut bytes = asset.as_bytes().to_vec();
-        let cfg = Cfg {
-            minify_css: true,
-            minify_js: false,
-        };
+        let html = asset.as_text()?;
 
-        match in_place(&mut bytes, &cfg) {
-            Ok(len) => {
-                bytes.truncate(len);
-                let minified =
-                    String::from_utf8(bytes).map_err(|e| ProcessingError::Malformed {
-                        message: e.to_string().into(),
-                    })?;
-                asset.replace_with_text(minified.into(), MediaType::Html);
-                Ok(())
-            }
-            Err(e) => Err(ProcessingError::Compilation {
-                message: format!("HTML minification failed at byte {}", e.position).into(),
-            }),
-        }
+        let minified = rewrite_str(
+            html,
+            RewriteStrSettings {
+                document_content_handlers: vec![
+                    doc_comments!(|comment| {
+                        comment.remove();
+                        Ok(())
+                    }),
+                    doc_text!(|text| {
+                        if text.as_str().trim().is_empty() {
+                            text.remove();
+                        }
+                        Ok(())
+                    }),
+                ],
+                strict: false,
+                ..RewriteStrSettings::new()
+            },
+        )
+        .map_err(|e| ProcessingError::Compilation {
+            message: e.to_string().into(),
+        })?;
+
+        asset.replace_with_text(minified.into(), MediaType::Html);
+        Ok(())
     }
 }
 

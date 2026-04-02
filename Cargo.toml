@@ -14,51 +14,49 @@ authors = [
 # Date parsing
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 # Clipboard
-arboard = "3.6.0"
+arboard = "3.6.1"
 # CLI argument parsing
 clap = { version = "4", features = ["derive"] }
 # Data types
-codas = "0.5.1"
-codas-macros = "0.5.1"
+codas = "0.7.1"
+codas-macros = "0.7.1"
 # File glob patterns
-glob = "0.3.2"
+glob = "0.3.3"
 # SASS-y compiler
 grass = "0.13.4"
 # HTML parsing and rewriting.
-lol_html = "2.7.1"
+lol_html = "2.7.2"
 # Image processing.
-image = { version = "0.25.8", default-features = false, features = ["rayon", "jpeg", "png", "gif", "ico", "webp"] }
+image = { version = "0.25.10", default-features = false, features = ["rayon", "jpeg", "png", "gif", "ico", "webp"] }
 # Template processing.
-logos = "0.15.1"
+logos = "0.16.1"
 # Markdown processing.
-markdown = "1.0.0-alpha.21"
+markdown = "1.0.0"
 # JavaScript bundling.
-brk_rolldown = "0.2.3"
-brk_rolldown_common = "0.2.3"
+brk_rolldown = "1.0.0-rc.7"
+brk_rolldown_common = "1.0.0-rc.7"
 # Async runtime (required by brk_rolldown)
-tokio = { version = "1.48.0", features = ["rt-multi-thread", "macros", "fs", "process"] }
+tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros", "fs", "process"] }
 # HTTP client
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
-# HTML file minification
-minify-html-onepass = { version = "0.18.1", default-features = false }
+reqwest = { version = "0.13", default-features = false }
 # JS file minification
-oxc_allocator = "0.110"
-oxc_codegen = "0.110"
-oxc_minifier = "0.110"
-oxc_parser = "0.110"
-oxc_span = "0.110"
+oxc_allocator = "0.123"
+oxc_codegen = "0.123"
+oxc_minifier = "0.123"
+oxc_parser = "0.123"
+oxc_span = "0.123"
 # ICC color profiles
-moxcms = "0.7.2"
+moxcms = "0.8.1"
 # Colorspaces
 palette = "0.7.6"
 # Terminal rendering.
-ratatui = "0.29.0"
+ratatui = "0.30.0"
 # TOML parsing
 serde = { version = "1.0", features = ["derive"] }
-toml = "0.9.11"
+toml = "1.1.2"
 # Logging.
-tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 # URL canonicalization
 url = "2.5.8"
 # HTTP server
@@ -68,7 +66,7 @@ tower-http = { version = "0.6.8", features = ["fs", "set-header"] }
 notify-debouncer-mini = "0.7.0"
 
 [dev-dependencies]
-test-log = { version = "0.2.18", default-features = false, features = ["trace", "unstable"] }
+test-log = { version = "0.2.19", default-features = false, features = ["trace", "unstable"] }
 
 [profile.release]
 # Optimize for compiled size.
