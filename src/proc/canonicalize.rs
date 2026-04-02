@@ -2,7 +2,7 @@ use codas::types::Text;
 use lol_html::{RewriteStrSettings, element, rewrite_str};
 use url::Url;
 
-use super::{Asset, Context, Environment, MediaType, ProcessesAssets, ProcessingError};
+use super::{Asset, Environment, LayeredContext, MediaType, ProcessesAssets, ProcessingError};
 
 /// Canonicalizes relative and absolute URL paths in HTML assets
 /// by converting them to fully-qualified URLs based on a root parameter.
@@ -238,7 +238,7 @@ impl ProcessesAssets for CanonicalizeProcessor {
     fn process(
         &self,
         _env: &Environment,
-        _context: &mut Context,
+        _context: &LayeredContext,
         asset: &mut Asset,
     ) -> Result<(), ProcessingError> {
         match asset.media_type() {
@@ -260,6 +260,8 @@ impl ProcessesAssets for CanonicalizeProcessor {
 
 #[cfg(test)]
 mod tests {
+    use crate::proc::LayeredContext;
+
     use super::*;
 
     fn processor() -> CanonicalizeProcessor {
@@ -396,8 +398,12 @@ mod tests {
     fn skips_non_html_css_assets() {
         let p = processor();
         let mut asset = Asset::new("script.js".into(), b"const x = '/api'".to_vec());
-        p.process(&Environment::test(), &mut Context::default(), &mut asset)
-            .unwrap();
+        p.process(
+            &Environment::test(),
+            &LayeredContext::from_flat(Default::default()),
+            &mut asset,
+        )
+        .unwrap();
         assert_eq!(asset.as_text().unwrap(), "const x = '/api'");
     }
 
@@ -409,8 +415,12 @@ mod tests {
             b"@font-face { src: url('/fonts/test.ttf'); }".to_vec(),
         );
         assert_eq!(asset.media_type(), &MediaType::Css);
-        p.process(&Environment::test(), &mut Context::default(), &mut asset)
-            .unwrap();
+        p.process(
+            &Environment::test(),
+            &LayeredContext::from_flat(Default::default()),
+            &mut asset,
+        )
+        .unwrap();
         assert_eq!(
             asset.as_text().unwrap(),
             "@font-face { src: url('https://example.com/fonts/test.ttf'); }"
@@ -424,8 +434,12 @@ mod tests {
             "/blog/posts/article.html".into(),
             b"<a href=\"../index.html\">Back</a>".to_vec(),
         );
-        p.process(&Environment::test(), &mut Context::default(), &mut asset)
-            .unwrap();
+        p.process(
+            &Environment::test(),
+            &LayeredContext::from_flat(Default::default()),
+            &mut asset,
+        )
+        .unwrap();
         assert!(
             asset
                 .as_text()

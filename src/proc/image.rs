@@ -2,7 +2,7 @@ use std::io::Cursor;
 
 use image::ImageFormat;
 
-use super::{Asset, Context, Environment, MediaCategory, ProcessesAssets, ProcessingError};
+use super::{Asset, Environment, LayeredContext, MediaCategory, ProcessesAssets, ProcessingError};
 
 /// Resizes images to fit within a given width and height,
 /// preserving the image's original aspect ratio.
@@ -32,7 +32,7 @@ impl ProcessesAssets for ImageResizeProcessor {
     fn process(
         &self,
         _env: &Environment,
-        _context: &mut Context,
+        _context: &LayeredContext,
         asset: &mut Asset,
     ) -> Result<(), ProcessingError> {
         // Skip assets that aren't images.
@@ -83,6 +83,7 @@ impl ProcessesAssets for ImageResizeProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proc::LayeredContext;
 
     #[test_log::test]
     #[test_log(default_log_filter = "debug")]
@@ -100,7 +101,11 @@ mod tests {
         // Resize the image.
         let (width, height) = (300, 300);
         ImageResizeProcessor { width, height }
-            .process(&Environment::test(), &mut Context::default(), &mut asset)
+            .process(
+                &Environment::test(),
+                &LayeredContext::from_flat(Default::default()),
+                &mut asset,
+            )
             .unwrap();
 
         // Check the dimensions of the resized image.

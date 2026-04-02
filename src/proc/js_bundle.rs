@@ -3,7 +3,7 @@ use std::path::Path;
 use brk_rolldown::{Bundler, BundlerOptions};
 use brk_rolldown_common::Output;
 
-use super::{Asset, Context, Environment, MediaType, ProcessesAssets, ProcessingError};
+use super::{Asset, Environment, LayeredContext, MediaType, ProcessesAssets, ProcessingError};
 
 /// Bundles JavaScript entry points and their dependencies into a single file.
 ///
@@ -111,7 +111,7 @@ impl ProcessesAssets for JsBundleProcessor {
     fn process(
         &self,
         _env: &Environment,
-        _context: &mut Context,
+        _context: &LayeredContext,
         asset: &mut Asset,
     ) -> Result<(), ProcessingError> {
         // Skip assets that aren't JavaScript.
@@ -138,6 +138,7 @@ impl ProcessesAssets for JsBundleProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proc::LayeredContext;
 
     #[test]
     fn skips_non_javascript_assets() {
@@ -149,7 +150,7 @@ mod tests {
         // Processing should succeed (skip) without errors.
         let result = processor.process(
             &Environment::test(),
-            &mut Context::default(),
+            &LayeredContext::from_flat(Default::default()),
             &mut css_asset,
         );
         assert!(result.is_ok());
@@ -163,8 +164,11 @@ mod tests {
         let mut js_asset = Asset::new("test/js_bundle/entry.js".into(), "".as_bytes().to_vec());
 
         // Process the asset.
-        let result =
-            processor.process(&Environment::test(), &mut Context::default(), &mut js_asset);
+        let result = processor.process(
+            &Environment::test(),
+            &LayeredContext::from_flat(Default::default()),
+            &mut js_asset,
+        );
         assert!(result.is_ok());
 
         // Check that the bundled code contains content from the entry point

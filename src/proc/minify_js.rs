@@ -4,7 +4,7 @@ use oxc_minifier::{Minifier, MinifierOptions};
 use oxc_parser::Parser;
 use oxc_span::SourceType;
 
-use super::{Asset, Context, Environment, MediaType, ProcessesAssets, ProcessingError};
+use super::{Asset, Environment, LayeredContext, MediaType, ProcessesAssets, ProcessingError};
 
 /// Minifies JavaScript assets by removing unnecessary whitespace and comments.
 ///
@@ -15,7 +15,7 @@ impl ProcessesAssets for MinifyJsProcessor {
     fn process(
         &self,
         _env: &Environment,
-        _context: &mut Context,
+        _context: &LayeredContext,
         asset: &mut Asset,
     ) -> Result<(), ProcessingError> {
         if asset.media_type() != &MediaType::JavaScript {
@@ -62,6 +62,7 @@ impl ProcessesAssets for MinifyJsProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proc::LayeredContext;
 
     #[test]
     fn minifies_js() {
@@ -75,7 +76,11 @@ mod tests {
         "#;
         let mut asset = Asset::new("script.js".into(), js.as_bytes().to_vec());
         MinifyJsProcessor
-            .process(&Environment::test(), &mut Context::default(), &mut asset)
+            .process(
+                &Environment::test(),
+                &LayeredContext::from_flat(Default::default()),
+                &mut asset,
+            )
             .unwrap();
 
         let result = asset.as_text().unwrap();
@@ -93,7 +98,11 @@ mod tests {
     fn skips_non_js() {
         let mut asset = Asset::new("index.html".into(), b"<html></html>".to_vec());
         MinifyJsProcessor
-            .process(&Environment::test(), &mut Context::default(), &mut asset)
+            .process(
+                &Environment::test(),
+                &LayeredContext::from_flat(Default::default()),
+                &mut asset,
+            )
             .unwrap();
         assert_eq!(asset.as_text().unwrap(), "<html></html>");
     }
@@ -103,7 +112,11 @@ mod tests {
         let js = "function test(){console.log('already minified')}";
         let mut asset = Asset::new("vendor.min.js".into(), js.as_bytes().to_vec());
         MinifyJsProcessor
-            .process(&Environment::test(), &mut Context::default(), &mut asset)
+            .process(
+                &Environment::test(),
+                &LayeredContext::from_flat(Default::default()),
+                &mut asset,
+            )
             .unwrap();
         // Content should be unchanged.
         assert_eq!(asset.as_text().unwrap(), js);

@@ -13,9 +13,10 @@ use tokio::fs;
 use serde::Deserialize;
 
 use crate::proc::{
-    Asset, Context, ContextValue, Environment, MediaType, ProcessesAssets, ProcessingError,
+    Asset, AssetMetadata, Context, ContextValue, Environment, LayeredContext, MediaType,
+    ProcessesAssets, ProcessingError,
     canonicalize::CanonicalizeProcessor,
-    context_from_toml,
+    context_from_toml, extract_frontmatter,
     favicon::FaviconProcessor,
     image::ImageResizeProcessor,
     js_bundle::JsBundleProcessor,
@@ -23,7 +24,7 @@ use crate::proc::{
     minify_html::MinifyHtmlProcessor,
     minify_js::MinifyJsProcessor,
     scss::ScssProcessor,
-    template::{PART_CONTEXT_PREFIX, TemplateProcessor},
+    template::{PART_CONTEXT_PREFIX, PART_DEFAULTS_PREFIX, TemplateProcessor},
 };
 use crate::tool::DEFAULT_CONFIG_FILE;
 use crate::tool::kits::{self, ResolvedKit};
@@ -44,6 +45,19 @@ fn context_push_asset(context: &mut Context, key: codas::types::Text, value: Con
         _ => {
             context.insert(key, ContextValue::List(vec![value]));
         }
+    }
+}
+
+/// Registers a part in the processing context by extracting its frontmatter
+/// and storing the body and defaults under the appropriate prefix keys.
+fn register_part(context: &mut Context, key: &str, content: &[u8]) {
+    let content_str: codas::types::Text = String::from_utf8_lossy(content).to_string().into();
+    let (body, defaults) = extract_frontmatter(&content_str);
+    let part_key = format!("{}{}", PART_CONTEXT_PREFIX, key);
+    context.insert(part_key.into(), ContextValue::Text(body.into()));
+    if let Some(defaults) = defaults {
+        let ctx_key = format!("{}{}", PART_DEFAULTS_PREFIX, key);
+        context.insert(ctx_key.into(), ContextValue::Table(defaults));
     }
 }
 
@@ -157,12 +171,10 @@ pub async fn build_assets(config: &BuildConfig<'_>, context: &mut Context) -> st
     let clean_urls = config.clean_urls;
     let resolved_kits = config.resolved_kits;
     let project_root = config.project_root;
-    // Collect all assets from source directory.
     let mut assets = Vec::new();
     collect_assets(source, &mut assets).await?;
     tracing::info!("Found {} assets", assets.len());
 
-    // Create target directory if it doesn't exist.
     if !fs::try_exists(target).await? {
         fs::create_dir_all(target).await?;
     }
@@ -182,9 +194,7 @@ pub async fn build_assets(config: &BuildConfig<'_>, context: &mut Context) -> st
     let mut part_count = 0;
     for (relative_path, content) in assets {
         if is_part(&relative_path) {
-            let part_key = format!("{}{}", PART_CONTEXT_PREFIX, relative_path);
-            let content_str = String::from_utf8_lossy(&content).to_string();
-            context.insert(part_key.into(), ContextValue::Text(content_str.into()));
+            register_part(context, &relative_path, &content);
             part_count += 1;
             tracing::debug!("Found part: {}", relative_path);
         } else {
@@ -219,10 +229,9 @@ pub async fn build_assets(config: &BuildConfig<'_>, context: &mut Context) -> st
 
             if is_part(&relative_path) {
                 // Store kit parts as {kit_name}/{path} for template resolution.
-                let part_key = format!("{}{}/{}", PART_CONTEXT_PREFIX, kit.name, relative_path);
-                let content_str = String::from_utf8_lossy(&content).to_string();
-                context.insert(part_key.into(), ContextValue::Text(content_str.into()));
-                tracing::debug!("Found kit part: {}/{}", kit.name, relative_path);
+                let kit_relative = format!("{}/{}", kit.name, relative_path);
+                register_part(context, &kit_relative, &content);
+                tracing::debug!("Found kit part: {}", kit_relative);
             } else {
                 // Collision detection.
                 if project_asset_paths.contains(&output_path) {
@@ -317,21 +326,20 @@ pub async fn build_assets(config: &BuildConfig<'_>, context: &mut Context) -> st
         // Snapshot current asset_outputs to detect changes after this pass.
         let outputs_before = env.asset_outputs.read().unwrap().clone();
 
-        // Process all assets using the current context, which includes
-        // results from the previous pass (or tool-injected entries on pass 0).
-        let shared_context = Arc::new(context.clone());
+        // Share the base context across all tasks via Arc.
+        let shared_base: Arc<Context> = Arc::new(context.clone());
         let handles: Vec<_> = regular_assets
             .iter()
             .map(|(relative_path, content)| {
                 let procs = Arc::clone(&procs);
-                let ctx = Arc::clone(&shared_context);
+                let base = Arc::clone(&shared_base);
                 let env = Arc::clone(&env);
                 let target = Arc::clone(&target);
                 let path = relative_path.clone();
                 let content = content.clone();
                 tokio::spawn(async move {
                     let result =
-                        process_asset(&path, content, &procs, &env, &ctx, &target, clean_urls)
+                        process_asset(&path, content, &procs, &env, base, &target, clean_urls)
                             .await;
                     (path, result)
                 })
@@ -341,14 +349,14 @@ pub async fn build_assets(config: &BuildConfig<'_>, context: &mut Context) -> st
         let mut success_count = 0;
         error_count = 0;
 
-        // Collect results into a temporary list, then rebuild context.
-        let mut pass_results: Vec<(String, Context)> = Vec::new();
+        // Collect asset metadata results.
+        let mut pass_results: Vec<(String, AssetMetadata)> = Vec::new();
 
         for handle in handles {
             match handle.await {
-                Ok((path, Ok(asset_ctx))) => {
+                Ok((path, Ok(metadata))) => {
                     success_count += 1;
-                    pass_results.push((path, asset_ctx));
+                    pass_results.push((path, metadata));
                 }
                 Ok((path, Err(e))) => {
                     tracing::error!("Error processing {}: {}", path, e);
@@ -370,12 +378,12 @@ pub async fn build_assets(config: &BuildConfig<'_>, context: &mut Context) -> st
             context.insert(key.clone(), ContextValue::List(items));
         }
 
-        // Insert processed asset results into context.
-        for (path, asset_ctx) in pass_results {
+        // Insert processed asset metadata into context.
+        for (path, metadata) in pass_results {
             let dir = path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
             let key: codas::types::Text =
                 format!("{}{}", ASSET_PATH_CONTEXT_KEY_PREFIX, dir).into();
-            context_push_asset(context, key, ContextValue::Table(asset_ctx));
+            context_push_asset(context, key, ContextValue::Table(metadata));
         }
 
         // Check if asset outputs changed during this pass.
@@ -427,12 +435,13 @@ pub async fn process_asset(
     content: Vec<u8>,
     procs: &BTreeMap<String, ProcessorConfig>,
     env: &Environment,
-    context: &Context,
+    base: Arc<Context>,
     target: &Path,
     clean_urls: bool,
-) -> std::io::Result<Context> {
+) -> std::io::Result<AssetMetadata> {
     let mut asset = Asset::new(path.into(), content);
-    let mut context = context.clone();
+    let mut context = LayeredContext::new(base);
+    context.push_layer(); // asset-level overlay
 
     // If canonicalization is enabled, add the asset's canonical
     // path to the processing context.
@@ -466,7 +475,21 @@ pub async fn process_asset(
     let mut ran_processors: Vec<&str> = Vec::new();
 
     // Perform phase one of processing (transformation and pattern wrapping).
+    let mut first_pass = true;
     loop {
+        if let Ok(text) = asset.as_text() {
+            let (body, frontmatter) = extract_frontmatter(text);
+            if let Some(parsed) = frontmatter {
+                if first_pass {
+                    context.extend_top(parsed);
+                } else {
+                    context.fill(parsed);
+                }
+                asset.replace_with_text(body.into(), asset.media_type().clone());
+            }
+        }
+        first_pass = false;
+
         // Run transformation processors until media type stabilizes.
         let mut processed_types: Vec<MediaType> = Vec::new();
         loop {
@@ -482,7 +505,7 @@ pub async fn process_asset(
             for proc_name in TRANSFORMATION_PROCESSORS {
                 if let Some(config) = procs.get(*proc_name) {
                     let (modified, result) =
-                        run_processor(proc_name, config, env, &mut context, &mut asset);
+                        run_processor(proc_name, config, env, &context, &mut asset);
                     match result {
                         Err(e) => {
                             tracing::warn!("Processor `{}` failed on {}: {:?}", proc_name, path, e);
@@ -526,6 +549,15 @@ pub async fn process_asset(
                 }
             };
 
+            // Apply the pattern's defaults as a layer below the asset overlay.
+            // This gives us: asset > pattern defaults > global — structurally.
+            let defaults_key: codas::types::Text =
+                format!("{}{}", PART_DEFAULTS_PREFIX, pattern_path).into();
+            if let Some(ContextValue::Table(defaults)) = context.get(&defaults_key) {
+                let defaults = defaults.clone();
+                context.insert_layer_below_top(defaults);
+            }
+
             // Determine media type from pattern extension.
             let pattern_media_type = pattern_path
                 .rsplit('.')
@@ -543,15 +575,13 @@ pub async fn process_asset(
             continue;
         }
 
-        // No pattern found, exit the loop.
         break;
     }
 
     // Perform phase two of processing (finalization).
     for proc_name in FINALIZATION_PROCESSORS {
         if let Some(config) = procs.get(*proc_name) {
-            let (modified, result) =
-                run_processor(proc_name, config, env, &mut context, &mut asset);
+            let (modified, result) = run_processor(proc_name, config, env, &context, &mut asset);
             match result {
                 Err(e) => {
                     tracing::warn!("Processor `{}` failed on {}: {:?}", proc_name, path, e);
@@ -564,7 +594,6 @@ pub async fn process_asset(
         }
     }
 
-    // Determine the assets' extension based on media type.
     let new_extension = asset
         .media_type()
         .extensions()
@@ -592,16 +621,13 @@ pub async fn process_asset(
     fs::write(&target_path, asset.as_bytes()).await?;
 
     // Log processing summary.
-    // Truncate target path if only the filename/extension changed (not the directory).
     let source_dir = path.rsplit_once('/').map(|(dir, _)| dir);
     let target_dir = processed_path.rsplit_once('/').map(|(dir, _)| dir);
     let target_filename = processed_path.rsplit('/').next().unwrap_or(&processed_path);
 
     let display_target = if source_dir.is_some() && source_dir == target_dir {
-        // Same directory, truncate to /../filename
         format!("/../{}", target_filename)
     } else {
-        // Different directory or root-level file, show full path
         format!("/{}", processed_path)
     };
 
@@ -622,7 +648,9 @@ pub async fn process_asset(
         .unwrap()
         .insert(path.to_string(), processed_path);
 
-    Ok(context)
+    // Return only the page-level overlay as asset metadata.
+    let page_overlay = context.pop_layer().unwrap_or_default();
+    Ok(page_overlay)
 }
 
 /// Runs a single processor against an asset.
@@ -633,7 +661,7 @@ pub fn run_processor(
     name: &str,
     config: &ProcessorConfig,
     env: &Environment,
-    context: &mut Context,
+    context: &LayeredContext,
     asset: &mut Asset,
 ) -> (bool, Result<(), ProcessingError>) {
     // Capture state before processing.

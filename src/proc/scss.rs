@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use grass::{Options, from_string};
 
-use super::{Asset, Context, Environment, MediaType, ProcessesAssets, ProcessingError};
+use super::{Asset, Environment, LayeredContext, MediaType, ProcessesAssets, ProcessingError};
 
 impl From<Box<grass::Error>> for ProcessingError {
     fn from(error: Box<grass::Error>) -> Self {
@@ -24,7 +24,7 @@ impl ProcessesAssets for ScssProcessor {
     fn process(
         &self,
         env: &Environment,
-        _context: &mut Context,
+        _context: &LayeredContext,
         asset: &mut Asset,
     ) -> Result<(), ProcessingError> {
         if *asset.media_type() != MediaType::Scss {
@@ -124,6 +124,7 @@ impl grass::Fs for KitFs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proc::LayeredContext;
 
     #[test]
     fn processes_scss() {
@@ -138,7 +139,11 @@ body {
 "#;
         let mut asset = Asset::new("styles.scss".into(), scss.as_bytes().to_vec());
         ScssProcessor {}
-            .process(&Environment::test(), &mut Context::default(), &mut asset)
+            .process(
+                &Environment::test(),
+                &LayeredContext::from_flat(Default::default()),
+                &mut asset,
+            )
             .unwrap();
 
         assert_eq!(
@@ -166,7 +171,11 @@ nav {
 "#;
         let mut asset = Asset::new("nav.scss".into(), scss.as_bytes().to_vec());
         ScssProcessor {}
-            .process(&Environment::test(), &mut Context::default(), &mut asset)
+            .process(
+                &Environment::test(),
+                &LayeredContext::from_flat(Default::default()),
+                &mut asset,
+            )
             .unwrap();
 
         assert_eq!(

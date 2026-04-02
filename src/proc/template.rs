@@ -3,8 +3,8 @@ use codas::types::Text;
 use logos::{Lexer, Logos, Span};
 
 use crate::proc::{
-    Asset, Context, ContextValue, Environment, MediaCategory, ProcessesAssets, ProcessingError,
-    context_from_toml,
+    Asset, ContextValue, Environment, LayeredContext, MediaCategory, ProcessesAssets,
+    ProcessingError,
 };
 use crate::tool::procs::ASSET_PATH_CONTEXT_KEY_PREFIX;
 
@@ -12,18 +12,14 @@ mod tokenizer;
 
 use tokenizer::{TemplateExpression, Token};
 
-pub const FRONTMATTER_DELIMITER: &str = "***";
-
 /// Prefix used to store parts in the processing context.
 pub const PART_CONTEXT_PREFIX: &str = "_part:";
 
+/// Prefix used to store part defaults in the processing context.
+pub const PART_DEFAULTS_PREFIX: &str = "_part_ctx:";
+
 /// Processes text assets containing template expressions wrapped in
 /// `{~ }`, drawing values from a context of key-value pairs.
-///
-/// Before processing template expressions, the processor extracts TOML
-/// frontmatter from the asset and merges it into the processing context.
-/// Text contains valid frontmatter if it begins with valid TOML content
-/// followed by [FRONTMATTER_DELIMITER] on its own line.
 ///
 /// # Example
 ///
@@ -57,7 +53,7 @@ impl ProcessesAssets for TemplateProcessor {
     fn process(
         &self,
         env: &Environment,
-        context: &mut Context,
+        context: &LayeredContext,
         asset: &mut Asset,
     ) -> Result<(), ProcessingError> {
         if asset.media_type().category() != MediaCategory::Text {
@@ -66,8 +62,7 @@ impl ProcessesAssets for TemplateProcessor {
 
         tracing::trace!("template: {}", asset.path());
 
-        // Extract frontmatter before processing templates.
-        let template = Self::extract_frontmatter(context, asset.as_text()?);
+        let template = asset.as_text()?;
         let mut lexer = Token::lexer(template);
         let mut output = String::with_capacity(template.len());
         Self::compile_template(env, context, &mut lexer, &mut output)?;
@@ -78,86 +73,11 @@ impl ProcessesAssets for TemplateProcessor {
 }
 
 impl TemplateProcessor {
-    /// Extracts TOML frontmatter from some text,
-    /// merges it into context, and returns the remaining content.
-    ///
-    /// If the content before `***` is not valid TOML, returns the original
-    /// content unchanged (the `***` might just be regular content).
-    fn extract_frontmatter<'a>(context: &mut Context, text: &'a Text) -> &'a str {
-        // Look for the frontmatter delimiter on its own line.
-        let delimiter_pattern = format!("\n{}\n", FRONTMATTER_DELIMITER);
-        let split_pos = if text.starts_with(&format!("{}\n", FRONTMATTER_DELIMITER)) {
-            Some(0)
-        } else {
-            text.find(&delimiter_pattern)
-        };
-
-        // No frontmatter found - return content as-is.
-        let Some(pos) = split_pos else {
-            return text.as_str();
-        };
-
-        // Split into frontmatter and body.
-        let frontmatter = &text[..pos];
-        let body_start = if pos == 0 {
-            FRONTMATTER_DELIMITER.len() + 1
-        } else {
-            pos + delimiter_pattern.len() - 1
-        };
-        let body = &text[body_start..];
-
-        // Try to parse the frontmatter as TOML. If parsing fails, treat
-        // it as no frontmatter (*** might just be in regular content).
-        match Self::parse_toml(frontmatter) {
-            Ok(parsed) => {
-                context.extend(parsed);
-                body
-            }
-            Err(_) => text,
-        }
-    }
-
-    /// Parses TOML content into context values.
-    fn parse_toml(content: &str) -> Result<Context, ProcessingError> {
-        let table: toml::Table =
-            toml::from_str(content).map_err(|e| ProcessingError::Malformed {
-                message: format!("invalid TOML frontmatter: {}", e).into(),
-            })?;
-        context_from_toml(table)
-    }
-
-    /// Resolves an identifier against the context, traversing nested
-    /// tables for dotted identifiers like `user.name`.
-    fn resolve_dotted<'a>(context: &'a Context, identifier: &str) -> Option<&'a ContextValue> {
-        if !identifier.contains('.') {
-            let key: Text = identifier.into();
-            return context.get(&key);
-        }
-
-        let segments: Vec<&str> = identifier.split('.').collect();
-        let mut current = context;
-
-        for (i, segment) in segments.iter().enumerate() {
-            let key: Text = (*segment).into();
-            match current.get(&key) {
-                Some(ContextValue::Table(table)) if i < segments.len() - 1 => {
-                    current = table;
-                }
-                Some(value) if i == segments.len() - 1 => {
-                    return Some(value);
-                }
-                _ => return None,
-            }
-        }
-
-        None
-    }
-
     /// Compiles a text template containing zero or more [TemplateExpression]s,
     /// appending the compiled results to `output`.
     fn compile_template(
         env: &Environment,
-        context: &Context,
+        context: &LayeredContext,
         lexer: &mut Lexer<Token>,
         output: &mut String,
     ) -> Result<(), ProcessingError> {
@@ -203,7 +123,7 @@ impl TemplateProcessor {
                             // Try each identifier until one resolves.
                             let mut resolved = None;
                             for ident in &identifiers {
-                                match Self::resolve_dotted(context, ident) {
+                                match context.resolve(ident) {
                                     Some(ContextValue::Text(text)) => {
                                         resolved = Some(text.clone());
                                         break;
@@ -267,9 +187,7 @@ impl TemplateProcessor {
                                 })?
                                 .try_as_string()?;
 
-                            if let Some(ContextValue::Text(raw)) =
-                                Self::resolve_dotted(context, &identifier)
-                            {
+                            if let Some(ContextValue::Text(raw)) = context.resolve(&identifier) {
                                 if let Some(date) = Self::parse_date(raw) {
                                     output.push_str(&date.format(format.as_str()).to_string());
                                 } else {
@@ -319,7 +237,7 @@ impl TemplateProcessor {
                                 let rhs = match compare_arg {
                                     TemplateExpression::String(s) => Some(s.clone()),
                                     TemplateExpression::Identifier(id) => {
-                                        match Self::resolve_dotted(context, id) {
+                                        match context.resolve(id) {
                                             Some(ContextValue::Text(t)) => Some(t.clone()),
                                             _ => None,
                                         }
@@ -327,7 +245,7 @@ impl TemplateProcessor {
                                     _ => None,
                                 };
 
-                                let lhs = match Self::resolve_dotted(context, identifier) {
+                                let lhs = match context.resolve(identifier) {
                                     Some(ContextValue::Text(t)) => Some(t.clone()),
                                     _ => None,
                                 };
@@ -349,16 +267,15 @@ impl TemplateProcessor {
                                     (false, first_arg)
                                 };
 
-                                let truthy =
-                                    match Self::resolve_dotted(context, identifier.as_str()) {
-                                        Some(ContextValue::Text(text)) => {
-                                            text != "false" && text != "0" && !text.is_empty()
-                                        }
-                                        Some(ContextValue::AssetRef(_)) => true,
-                                        Some(ContextValue::List(list)) => !list.is_empty(),
-                                        Some(ContextValue::Table(table)) => !table.is_empty(),
-                                        None => false,
-                                    };
+                                let truthy = match context.resolve(identifier.as_str()) {
+                                    Some(ContextValue::Text(text)) => {
+                                        text != "false" && text != "0" && !text.is_empty()
+                                    }
+                                    Some(ContextValue::AssetRef(_)) => true,
+                                    Some(ContextValue::List(list)) => !list.is_empty(),
+                                    Some(ContextValue::Table(table)) => !table.is_empty(),
+                                    None => false,
+                                };
 
                                 if negate { !truthy } else { truthy }
                             };
@@ -395,9 +312,14 @@ impl TemplateProcessor {
                                 }
                             };
 
-                            // Extract frontmatter from the part and merge into context.
-                            let mut part_context = context.clone();
-                            let body = Self::extract_frontmatter(&mut part_context, part_content);
+                            // Merge part defaults into a scoped context.
+                            let mut part_context = context.child_scope();
+                            let defaults_key: Text =
+                                format!("{}{}", PART_DEFAULTS_PREFIX, path).into();
+                            if let Some(ContextValue::Table(defaults)) = context.get(&defaults_key)
+                            {
+                                part_context.extend_top(defaults.clone());
+                            }
 
                             // Parse `with <value> as <key>` clauses.
                             let mut i = 1;
@@ -421,7 +343,7 @@ impl TemplateProcessor {
                                 let value = match value_arg {
                                     TemplateExpression::String(s) => ContextValue::Text(s.clone()),
                                     TemplateExpression::Identifier(id) => {
-                                        match Self::resolve_dotted(context, id) {
+                                        match context.resolve(id) {
                                             Some(v) => v.clone(),
                                             None => ContextValue::Text("".into()),
                                         }
@@ -461,7 +383,7 @@ impl TemplateProcessor {
                             }
 
                             // Compile the part content with the merged context.
-                            let mut part_lexer = Token::lexer(body);
+                            let mut part_lexer = Token::lexer(part_content);
                             Self::compile_template(env, &part_context, &mut part_lexer, output)?;
                         }
 
@@ -504,7 +426,7 @@ impl TemplateProcessor {
                                 let key_identifier = first;
                                 let val_identifier = args[1].try_as_identifier()?;
                                 let table_identifier = args[3].try_as_identifier()?;
-                                let resolved = Self::resolve_dotted(context, &table_identifier);
+                                let resolved = context.resolve(&table_identifier);
 
                                 if let Some(ContextValue::Table(table)) = resolved
                                     && !table.is_empty()
@@ -512,7 +434,7 @@ impl TemplateProcessor {
                                     let block_text = &lexer.source()[block_span];
 
                                     for (k, v) in table {
-                                        let mut loop_context = context.clone();
+                                        let mut loop_context = context.child_scope();
                                         loop_context.insert(
                                             key_identifier.clone(),
                                             ContextValue::Text(k.clone()),
@@ -562,7 +484,9 @@ impl TemplateProcessor {
                                         .into();
                                 let mut all_items: Vec<ContextValue> = Vec::new();
 
-                                for (key, value) in context.iter() {
+                                for (key, value) in
+                                    context.iter_by_prefix(ASSET_PATH_CONTEXT_KEY_PREFIX)
+                                {
                                     if (*key == assets_key || key.starts_with(prefix.as_str()))
                                         && let ContextValue::List(items) = value
                                     {
@@ -600,7 +524,7 @@ impl TemplateProcessor {
                                     };
 
                                     for item in &items {
-                                        let mut loop_context = context.clone();
+                                        let mut loop_context = context.child_scope();
                                         loop_context.insert(item_identifier.clone(), item.clone());
 
                                         let mut block_lexer = Token::lexer(block_text);
@@ -622,8 +546,7 @@ impl TemplateProcessor {
                                         message: "missing collection identifier in for loop".into(),
                                     })?
                                     .try_as_identifier()?;
-                                let collection =
-                                    Self::resolve_dotted(context, &collection_identifier);
+                                let collection = context.resolve(&collection_identifier);
 
                                 if let Some(ContextValue::List(items)) = collection
                                     && !items.is_empty()
@@ -631,7 +554,7 @@ impl TemplateProcessor {
                                     let block_text = &lexer.source()[block_span];
 
                                     for item in items {
-                                        let mut loop_context = context.clone();
+                                        let mut loop_context = context.child_scope();
                                         loop_context.insert(item_identifier.clone(), item.clone());
 
                                         let mut block_lexer = Token::lexer(block_text);
@@ -762,9 +685,36 @@ impl TemplateProcessor {
 
 #[cfg(test)]
 mod tests {
-    use crate::proc::{Asset, MediaType};
+    use crate::proc::{Asset, Context, MediaType, extract_frontmatter};
 
     use super::*;
+
+    fn apply_frontmatter(ctx: &mut Context, asset: &mut Asset) {
+        let (body, frontmatter) = extract_frontmatter(asset.as_text().unwrap());
+        if let Some(parsed) = frontmatter {
+            ctx.extend(parsed);
+            asset.replace_with_text(body.into(), asset.media_type().clone());
+        }
+    }
+
+    fn register_part(ctx: &mut Context, path: &str, content: &str) {
+        let text: Text = content.into();
+        let (body, defaults) = extract_frontmatter(&text);
+        let part_key: Text = format!("{}{}", PART_CONTEXT_PREFIX, path).into();
+        ctx.insert(part_key, ContextValue::Text(body.into()));
+        if let Some(defaults) = defaults {
+            let ctx_key: Text = format!("{}{}", PART_DEFAULTS_PREFIX, path).into();
+            ctx.insert(ctx_key, ContextValue::Table(defaults));
+        }
+    }
+
+    /// Wraps a flat context and runs the template processor.
+    fn run(ctx: &Context, asset: &mut Asset) {
+        let lctx = LayeredContext::from_flat(ctx.clone());
+        TemplateProcessor
+            .process(&Environment::test(), &lctx, asset)
+            .unwrap();
+    }
 
     fn get_text(ctx: &Context, key: &str) -> Option<Text> {
         let key: Text = key.into();
@@ -798,10 +748,8 @@ mod tests {
         );
         asset.set_media_type(MediaType::Html);
 
-        let mut ctx: Context = [("is_empty".into(), ContextValue::Text("true".into()))].into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx: Context = [("is_empty".into(), ContextValue::Text("true".into()))].into();
+        run(&ctx, &mut asset);
 
         assert_eq!(r#"This is empty!"#, asset.as_text().unwrap());
     }
@@ -815,10 +763,8 @@ mod tests {
         asset.set_media_type(MediaType::Html);
 
         // When is_empty is false, "not is_empty" should render the block.
-        let mut ctx: Context = [("is_empty".into(), ContextValue::Text("false".into()))].into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx: Context = [("is_empty".into(), ContextValue::Text("false".into()))].into();
+        run(&ctx, &mut asset);
 
         assert_eq!(r#"Not empty!"#, asset.as_text().unwrap());
     }
@@ -832,10 +778,8 @@ mod tests {
         asset.set_media_type(MediaType::Html);
 
         // When is_empty is true, "not is_empty" should NOT render the block.
-        let mut ctx: Context = [("is_empty".into(), ContextValue::Text("true".into()))].into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx: Context = [("is_empty".into(), ContextValue::Text("true".into()))].into();
+        run(&ctx, &mut asset);
 
         assert_eq!(r#""#, asset.as_text().unwrap());
     }
@@ -849,10 +793,8 @@ mod tests {
         asset.set_media_type(MediaType::Html);
 
         // When variable is missing (falsy), "not missing" should render the block.
-        let mut ctx = Context::default();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx = Context::default();
+        run(&ctx, &mut asset);
 
         assert_eq!(r#"Default content"#, asset.as_text().unwrap());
     }
@@ -868,7 +810,7 @@ mod tests {
         );
         asset.set_media_type(MediaType::Html);
 
-        let mut ctx: Context = [(
+        let ctx: Context = [(
             "items".into(),
             ContextValue::List(vec![
                 ContextValue::Text("apple".into()),
@@ -877,9 +819,7 @@ mod tests {
             ]),
         )]
         .into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        run(&ctx, &mut asset);
 
         assert_eq!(
             r#"Items: [apple, banana, cherry, ]"#,
@@ -897,9 +837,8 @@ author = "Test"
 <h1>{~ get title}</h1>"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        apply_frontmatter(&mut ctx, &mut asset);
+        run(&ctx, &mut asset);
 
         assert_eq!(get_text(&ctx, "title"), Some("Hello".into()));
         assert_eq!(get_text(&ctx, "author"), Some("Test".into()));
@@ -919,9 +858,8 @@ author = "Test"
 Body"#;
         let mut asset = Asset::new("page.md".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        apply_frontmatter(&mut ctx, &mut asset);
+        run(&ctx, &mut asset);
 
         let tags = get_list(&ctx, "tags").expect("expected list");
         assert_eq!(tags, vec!["rust", "web", "cli"]);
@@ -931,10 +869,8 @@ Body"#;
     fn handles_no_frontmatter() {
         let content = "<h1>No frontmatter here</h1>";
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
-        let mut ctx = Context::default();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx = Context::default();
+        run(&ctx, &mut asset);
 
         assert!(ctx.is_empty());
         assert_eq!(asset.as_text().unwrap(), content);
@@ -952,9 +888,8 @@ enabled = true
 Body"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        apply_frontmatter(&mut ctx, &mut asset);
+        run(&ctx, &mut asset);
 
         assert_eq!(get_text(&ctx, "name"), Some("test".into()));
         assert_eq!(get_text(&ctx, "count"), Some("42".into()));
@@ -972,9 +907,8 @@ active = true
 <p>{~ get user.name}</p>"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        apply_frontmatter(&mut ctx, &mut asset);
+        run(&ctx, &mut asset);
 
         assert!(ctx.contains_key(&"user".into()));
         assert!(asset.as_text().unwrap().contains("<p>Alice</p>"));
@@ -988,10 +922,8 @@ that happens to have
 ***
 a delimiter in it"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
-        let mut ctx = Context::default();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx = Context::default();
+        run(&ctx, &mut asset);
 
         // Should skip - content unchanged, context empty.
         assert!(ctx.is_empty());
@@ -1011,9 +943,7 @@ a delimiter in it"#;
             ContextValue::Text("<header>Header</header>".into()),
         );
 
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        run(&ctx, &mut asset);
 
         assert_eq!(
             asset.as_text().unwrap(),
@@ -1030,13 +960,13 @@ a delimiter in it"#;
 
         // Add a part with frontmatter that uses its own variable.
         // Note: content after *** delimiter includes a leading newline.
-        let part_key: Text = format!("{}_meta.html", PART_CONTEXT_PREFIX).into();
-        let part_content = "charset = \"utf-8\"\n\n***\n<meta charset=\"{~ get charset}\">";
-        ctx.insert(part_key, ContextValue::Text(part_content.into()));
+        register_part(
+            &mut ctx,
+            "_meta.html",
+            "charset = \"utf-8\"\n\n***\n<meta charset=\"{~ get charset}\">",
+        );
 
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        run(&ctx, &mut asset);
 
         // The part's frontmatter is used within the part itself.
         assert_eq!(
@@ -1064,9 +994,7 @@ a delimiter in it"#;
             ContextValue::Text("<header>Header</header>".into()),
         );
 
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        run(&ctx, &mut asset);
 
         assert_eq!(
             asset.as_text().unwrap(),
@@ -1084,10 +1012,8 @@ a delimiter in it"#;
 
         let mut nested = Context::default();
         nested.insert("active".into(), ContextValue::Text("true".into()));
-        let mut ctx: Context = [("user".into(), ContextValue::Table(nested))].into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx: Context = [("user".into(), ContextValue::Table(nested))].into();
+        run(&ctx, &mut asset);
 
         assert_eq!(asset.as_text().unwrap(), "Active!");
     }
@@ -1109,10 +1035,8 @@ a delimiter in it"#;
                 ContextValue::Text("c".into()),
             ]),
         );
-        let mut ctx: Context = [("data".into(), ContextValue::Table(nested))].into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx: Context = [("data".into(), ContextValue::Table(nested))].into();
+        run(&ctx, &mut asset);
 
         assert_eq!(asset.as_text().unwrap(), "a b c ");
     }
@@ -1126,10 +1050,8 @@ a delimiter in it"#;
         inner.insert("c".into(), ContextValue::Text("deep".into()));
         let mut outer = Context::default();
         outer.insert("b".into(), ContextValue::Table(inner));
-        let mut ctx: Context = [("a".into(), ContextValue::Table(outer))].into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx: Context = [("a".into(), ContextValue::Table(outer))].into();
+        run(&ctx, &mut asset);
 
         assert_eq!(asset.as_text().unwrap(), "deep");
     }
@@ -1142,10 +1064,8 @@ a delimiter in it"#;
         );
         asset.set_media_type(MediaType::Html);
 
-        let mut ctx = Context::default();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx = Context::default();
+        run(&ctx, &mut asset);
 
         assert_eq!(asset.as_text().unwrap(), "{~ get user.missing }");
     }
@@ -1158,10 +1078,8 @@ a delimiter in it"#;
         );
         asset.set_media_type(MediaType::Html);
 
-        let mut ctx: Context = [("name".into(), ContextValue::Text("Alice".into()))].into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx: Context = [("name".into(), ContextValue::Text("Alice".into()))].into();
+        run(&ctx, &mut asset);
 
         assert_eq!(asset.as_text().unwrap(), "Alice");
     }
@@ -1174,14 +1092,12 @@ a delimiter in it"#;
         );
         asset.set_media_type(MediaType::Html);
 
-        let mut ctx: Context = [
+        let ctx: Context = [
             ("title".into(), ContextValue::Text("Hello".into())),
             ("name".into(), ContextValue::Text("Alice".into())),
         ]
         .into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        run(&ctx, &mut asset);
 
         assert_eq!(asset.as_text().unwrap(), "Hello");
     }
@@ -1194,10 +1110,8 @@ a delimiter in it"#;
         );
         asset.set_media_type(MediaType::Html);
 
-        let mut ctx: Context = [("c".into(), ContextValue::Text("third".into()))].into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx: Context = [("c".into(), ContextValue::Text("third".into()))].into();
+        run(&ctx, &mut asset);
 
         assert_eq!(asset.as_text().unwrap(), "third");
     }
@@ -1210,10 +1124,8 @@ a delimiter in it"#;
         );
         asset.set_media_type(MediaType::Html);
 
-        let mut ctx = Context::default();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx = Context::default();
+        run(&ctx, &mut asset);
 
         assert_eq!(asset.as_text().unwrap(), "{~ get title or name }");
     }
@@ -1228,10 +1140,8 @@ a delimiter in it"#;
 
         let mut site = Context::default();
         site.insert("name".into(), ContextValue::Text("My Site".into()));
-        let mut ctx: Context = [("site".into(), ContextValue::Table(site))].into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx: Context = [("site".into(), ContextValue::Table(site))].into();
+        run(&ctx, &mut asset);
 
         assert_eq!(asset.as_text().unwrap(), "My Site");
     }
@@ -1240,9 +1150,10 @@ a delimiter in it"#;
     fn part_not_found_error() {
         let content = r#"{~ use "_missing.html"}"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
-        let mut ctx = Context::default();
+        let ctx = Context::default();
 
-        let result = TemplateProcessor.process(&Environment::test(), &mut ctx, &mut asset);
+        let lctx = LayeredContext::from_flat(ctx);
+        let result = TemplateProcessor.process(&Environment::test(), &lctx, &mut asset);
         assert!(result.is_err());
     }
 
@@ -1258,9 +1169,7 @@ a delimiter in it"#;
             ContextValue::Text("<p>{~ get message}</p>".into()),
         );
 
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        run(&ctx, &mut asset);
         assert_eq!(asset.as_text().unwrap(), "<p>Hello</p>");
     }
 
@@ -1278,9 +1187,7 @@ a delimiter in it"#;
             ContextValue::Text("<p>By {~ get name}</p>".into()),
         );
 
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        run(&ctx, &mut asset);
         assert_eq!(asset.as_text().unwrap(), "<p>By Alice</p>");
     }
 
@@ -1298,9 +1205,7 @@ a delimiter in it"#;
             ContextValue::Text("<h1>{~ get title}</h1><p>{~ get byline}</p>".into()),
         );
 
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        run(&ctx, &mut asset);
         assert_eq!(asset.as_text().unwrap(), "<h1>Welcome</h1><p>Bob</p>");
     }
 
@@ -1318,9 +1223,7 @@ a delimiter in it"#;
             ContextValue::Text("<h1>{~ get title}</h1><p>{~ get byline}</p>".into()),
         );
 
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        run(&ctx, &mut asset);
         assert_eq!(asset.as_text().unwrap(), "<h1>Welcome</h1><p>Bob</p>");
     }
 
@@ -1330,15 +1233,13 @@ a delimiter in it"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
 
-        let part_key: Text = format!("{}_header.html", PART_CONTEXT_PREFIX).into();
-        ctx.insert(
-            part_key,
-            ContextValue::Text("title = \"Default\"\n\n***\n<h1>{~ get title}</h1>".into()),
+        register_part(
+            &mut ctx,
+            "_header.html",
+            "title = \"Default\"\n\n***\n<h1>{~ get title}</h1>",
         );
 
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        run(&ctx, &mut asset);
         assert_eq!(asset.as_text().unwrap(), "\n<h1>Override</h1>");
     }
 
@@ -1358,9 +1259,7 @@ a delimiter in it"#;
             ContextValue::Text("<span>{~ get label}</span>".into()),
         );
 
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        run(&ctx, &mut asset);
         assert_eq!(asset.as_text().unwrap(), "<span>My Site</span>");
     }
 
@@ -1382,14 +1281,12 @@ a delimiter in it"#;
         bob.insert("name".into(), ContextValue::Text("Bob".into()));
         bob.insert("role".into(), ContextValue::Text("editor".into()));
 
-        let mut ctx: Context = [(
+        let ctx: Context = [(
             "users".into(),
             ContextValue::List(vec![ContextValue::Table(alice), ContextValue::Table(bob)]),
         )]
         .into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        run(&ctx, &mut asset);
 
         assert_eq!(asset.as_text().unwrap(), "Alice: admin\nBob: editor\n");
     }
@@ -1402,7 +1299,7 @@ a delimiter in it"#;
         );
         asset.set_media_type(MediaType::Html);
 
-        let mut ctx: Context = [(
+        let ctx: Context = [(
             "items".into(),
             ContextValue::List(vec![
                 ContextValue::Text("plain".into()),
@@ -1410,9 +1307,7 @@ a delimiter in it"#;
             ]),
         )]
         .into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        run(&ctx, &mut asset);
 
         assert_eq!(asset.as_text().unwrap(), "plain text ");
     }
@@ -1432,9 +1327,8 @@ url = "/about"
 {~ end}"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        apply_frontmatter(&mut ctx, &mut asset);
+        run(&ctx, &mut asset);
 
         assert_eq!(
             asset.as_text().unwrap(),
@@ -1450,7 +1344,7 @@ url = "/about"
         let mut entry = Context::default();
         entry.insert("name".into(), ContextValue::Text("x".into()));
 
-        let mut ctx: Context = [(
+        let ctx: Context = [(
             "items".into(),
             ContextValue::List(vec![
                 ContextValue::Text("a".into()),
@@ -1458,9 +1352,7 @@ url = "/about"
             ]),
         )]
         .into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        run(&ctx, &mut asset);
 
         let result = asset.as_text().unwrap();
         // Should render text items directly and non-text items with debug format.
@@ -1482,10 +1374,8 @@ url = "/about"
         colors.insert("blue".into(), ContextValue::Text("#00f".into()));
         colors.insert("red".into(), ContextValue::Text("#f00".into()));
 
-        let mut ctx: Context = [("colors".into(), ContextValue::Table(colors))].into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx: Context = [("colors".into(), ContextValue::Table(colors))].into();
+        run(&ctx, &mut asset);
 
         // BTreeMap iterates alphabetically.
         assert_eq!(asset.as_text().unwrap(), "blue=#00f red=#f00 ");
@@ -1511,10 +1401,8 @@ url = "/about"
         people.insert("alice".into(), ContextValue::Table(alice));
         people.insert("bob".into(), ContextValue::Table(bob));
 
-        let mut ctx: Context = [("people".into(), ContextValue::Table(people))].into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx: Context = [("people".into(), ContextValue::Table(people))].into();
+        run(&ctx, &mut asset);
 
         assert_eq!(asset.as_text().unwrap(), "alice: admin\nbob: editor\n");
     }
@@ -1527,10 +1415,8 @@ url = "/about"
         );
         asset.set_media_type(MediaType::Html);
 
-        let mut ctx: Context = [("empty".into(), ContextValue::Table(Context::default()))].into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx: Context = [("empty".into(), ContextValue::Table(Context::default()))].into();
+        run(&ctx, &mut asset);
 
         assert_eq!(asset.as_text().unwrap(), "beforeafter");
     }
@@ -1546,9 +1432,8 @@ prod = "https://example.com"
 {~ end}"#;
         let mut asset = Asset::new("page.html".into(), content.as_bytes().to_vec());
         let mut ctx = Context::default();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        apply_frontmatter(&mut ctx, &mut asset);
+        run(&ctx, &mut asset);
 
         assert_eq!(
             asset.as_text().unwrap(),
@@ -1564,10 +1449,8 @@ prod = "https://example.com"
         );
         asset.set_media_type(MediaType::Html);
 
-        let mut ctx: Context = [("role".into(), ContextValue::Text("admin".into()))].into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx: Context = [("role".into(), ContextValue::Text("admin".into()))].into();
+        run(&ctx, &mut asset);
 
         assert_eq!(asset.as_text().unwrap(), "yes");
     }
@@ -1580,10 +1463,8 @@ prod = "https://example.com"
         );
         asset.set_media_type(MediaType::Html);
 
-        let mut ctx: Context = [("role".into(), ContextValue::Text("editor".into()))].into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx: Context = [("role".into(), ContextValue::Text("editor".into()))].into();
+        run(&ctx, &mut asset);
 
         assert_eq!(asset.as_text().unwrap(), "");
     }
@@ -1596,10 +1477,8 @@ prod = "https://example.com"
         );
         asset.set_media_type(MediaType::Html);
 
-        let mut ctx: Context = [("role".into(), ContextValue::Text("editor".into()))].into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx: Context = [("role".into(), ContextValue::Text("editor".into()))].into();
+        run(&ctx, &mut asset);
 
         assert_eq!(asset.as_text().unwrap(), "restricted");
     }
@@ -1612,10 +1491,8 @@ prod = "https://example.com"
         );
         asset.set_media_type(MediaType::Html);
 
-        let mut ctx: Context = [("role".into(), ContextValue::Text("admin".into()))].into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx: Context = [("role".into(), ContextValue::Text("admin".into()))].into();
+        run(&ctx, &mut asset);
 
         assert_eq!(asset.as_text().unwrap(), "");
     }
@@ -1628,14 +1505,12 @@ prod = "https://example.com"
         );
         asset.set_media_type(MediaType::Html);
 
-        let mut ctx: Context = [
+        let ctx: Context = [
             ("color".into(), ContextValue::Text("blue".into())),
             ("favorite".into(), ContextValue::Text("blue".into())),
         ]
         .into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        run(&ctx, &mut asset);
 
         assert_eq!(asset.as_text().unwrap(), "match");
     }
@@ -1648,10 +1523,8 @@ prod = "https://example.com"
         );
         asset.set_media_type(MediaType::Html);
 
-        let mut ctx = Context::default();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx = Context::default();
+        run(&ctx, &mut asset);
 
         assert_eq!(asset.as_text().unwrap(), "");
     }
@@ -1664,10 +1537,8 @@ prod = "https://example.com"
         );
         asset.set_media_type(MediaType::Html);
 
-        let mut ctx = Context::default();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx = Context::default();
+        run(&ctx, &mut asset);
 
         // Missing variable is not equal to "value", so `is not` renders.
         assert_eq!(asset.as_text().unwrap(), "yes");
@@ -1683,10 +1554,8 @@ prod = "https://example.com"
         );
         asset.set_media_type(MediaType::Html);
 
-        let mut ctx = Context::default();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx = Context::default();
+        run(&ctx, &mut asset);
         assert_eq!(asset.as_text().unwrap(), "");
     }
 
@@ -1704,9 +1573,7 @@ prod = "https://example.com"
         let mut ctx = Context::default();
         ctx.insert("_assets:blog".into(), ContextValue::List(vec![]));
 
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        run(&ctx, &mut asset);
         assert_eq!(asset.as_text().unwrap(), "");
     }
 
@@ -1734,9 +1601,7 @@ prod = "https://example.com"
             ]),
         );
 
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        run(&ctx, &mut asset);
         assert_eq!(asset.as_text().unwrap(), "hello world ");
     }
 
@@ -1764,9 +1629,7 @@ prod = "https://example.com"
             ContextValue::List(vec![ContextValue::Table(entry)]),
         );
 
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        run(&ctx, &mut asset);
         assert_eq!(
             asset.as_text().unwrap(),
             "<a href=\"https://example.com/posts/my-post/\">My Post</a>\n"
@@ -1794,9 +1657,7 @@ prod = "https://example.com"
         // Subdirectory empty (articles still processing).
         ctx.insert("_assets:logs/my-article".into(), ContextValue::List(vec![]));
 
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        run(&ctx, &mut asset);
         assert_eq!(asset.as_text().unwrap(), "External");
     }
 
@@ -1826,9 +1687,7 @@ prod = "https://example.com"
             ContextValue::List(vec![ContextValue::Table(article)]),
         );
 
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        run(&ctx, &mut asset);
         // Both entries should appear (order is BTreeMap key order).
         assert_eq!(asset.as_text().unwrap(), "External, Article, ");
     }
@@ -1862,9 +1721,7 @@ prod = "https://example.com"
             ]),
         );
 
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        run(&ctx, &mut asset);
 
         assert_eq!(
             asset.as_text().unwrap(),
@@ -1895,9 +1752,7 @@ prod = "https://example.com"
             ]),
         );
 
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        run(&ctx, &mut asset);
 
         assert_eq!(asset.as_text().unwrap(), "Old, New, ");
     }
@@ -1910,10 +1765,8 @@ prod = "https://example.com"
         );
         asset.set_media_type(MediaType::Html);
 
-        let mut ctx: Context = [("mydate".into(), ContextValue::Text("2025-04-17".into()))].into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx: Context = [("mydate".into(), ContextValue::Text("2025-04-17".into()))].into();
+        run(&ctx, &mut asset);
         assert_eq!(asset.as_text().unwrap(), "04.17.2025");
     }
 
@@ -1925,14 +1778,12 @@ prod = "https://example.com"
         );
         asset.set_media_type(MediaType::Html);
 
-        let mut ctx: Context = [(
+        let ctx: Context = [(
             "d".into(),
             ContextValue::Text("2025-04-17T00:00:00Z".into()),
         )]
         .into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        run(&ctx, &mut asset);
         assert_eq!(asset.as_text().unwrap(), "04.17.2025");
     }
 
@@ -1944,10 +1795,8 @@ prod = "https://example.com"
         );
         asset.set_media_type(MediaType::Html);
 
-        let mut ctx: Context = [("d".into(), ContextValue::Text("not a date".into()))].into();
-        TemplateProcessor
-            .process(&Environment::test(), &mut ctx, &mut asset)
-            .unwrap();
+        let ctx: Context = [("d".into(), ContextValue::Text("not a date".into()))].into();
+        run(&ctx, &mut asset);
         assert_eq!(asset.as_text().unwrap(), "not a date");
     }
 

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use markdown::mdast::{AlignKind, Node};
 use markdown::message::Message;
 
-use super::{Asset, Context, Environment, MediaType, ProcessesAssets, ProcessingError};
+use super::{Asset, Environment, LayeredContext, MediaType, ProcessesAssets, ProcessingError};
 
 impl From<Message> for ProcessingError {
     fn from(error: Message) -> Self {
@@ -18,7 +18,7 @@ impl ProcessesAssets for MarkdownProcessor {
     fn process(
         &self,
         _env: &Environment,
-        _context: &mut Context,
+        _context: &LayeredContext,
         asset: &mut Asset,
     ) -> Result<(), ProcessingError> {
         if *asset.media_type() != MediaType::Markdown {
@@ -428,6 +428,7 @@ impl Footnotes {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proc::LayeredContext;
 
     #[test]
     fn processes_markdown() {
@@ -440,7 +441,7 @@ mod tests {
 
         let _ = MarkdownProcessor {}.process(
             &Environment::test(),
-            &mut Context::default(),
+            &LayeredContext::from_flat(Default::default()),
             &mut markdown_asset,
         );
 
