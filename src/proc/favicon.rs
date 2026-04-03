@@ -13,16 +13,16 @@ impl ProcessesAssets for FaviconProcessor {
         _env: &Environment,
         _context: &LayeredContext,
         asset: &mut Asset,
-    ) -> Result<(), ProcessingError> {
+    ) -> Result<bool, ProcessingError> {
         if asset.media_type() != &MediaType::Png {
-            return Ok(());
+            return Ok(false);
         }
 
         // Only process files named "favicon.png".
         let path = asset.path();
         let file_name = path.as_str().rsplit('/').next().unwrap_or(path.as_str());
         if file_name != "favicon.png" {
-            return Ok(());
+            return Ok(false);
         }
 
         tracing::trace!("favicon: {}", asset.path());
@@ -61,7 +61,7 @@ impl ProcessesAssets for FaviconProcessor {
         // Replace asset content with ICO and update media type.
         asset.replace_with_bytes(ico_bytes, MediaType::Ico);
 
-        Ok(())
+        Ok(true)
     }
 }
 

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use codas::types::Text;
 
@@ -21,9 +21,9 @@ pub mod template;
 pub struct Environment {
     pub source_root: PathBuf,
     pub kit_imports: BTreeMap<String, PathBuf>,
-    /// Maps asset input paths to their final output paths.
-    /// Populated during processing; used to resolve [ContextValue::AssetRef].
-    pub asset_outputs: RwLock<BTreeMap<String, String>>,
+    /// Maps asset input paths to their final output paths from the
+    /// previous convergence pass. Used to resolve [ContextValue::AssetRef].
+    pub asset_outputs: BTreeMap<String, String>,
 }
 
 #[cfg(test)]
@@ -32,7 +32,7 @@ impl Environment {
         Self {
             source_root: std::path::PathBuf::from("."),
             kit_imports: Default::default(),
-            asset_outputs: RwLock::new(BTreeMap::new()),
+            asset_outputs: BTreeMap::new(),
         }
     }
 }
@@ -40,12 +40,14 @@ impl Environment {
 /// A thing that processes [Asset]s.
 pub trait ProcessesAssets {
     /// Processes `asset` with access to a shared `context`.
+    ///
+    /// Returns `true` if the asset was modified, `false` if skipped.
     fn process(
         &self,
         env: &Environment,
         context: &LayeredContext,
         asset: &mut Asset,
-    ) -> Result<(), ProcessingError>;
+    ) -> Result<bool, ProcessingError>;
 }
 
 /// A flat context map used for overlays, table internals, and base construction.

@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use tokio::fs;
 
@@ -179,15 +179,11 @@ pub async fn build_assets(config: &BuildConfig<'_>, context: &mut Context) -> st
         fs::create_dir_all(target).await?;
     }
 
-    // Build the environment for processors that need filesystem state.
-    let env = Arc::new(Environment {
-        source_root: source.to_path_buf(),
-        kit_imports: resolved_kits
-            .iter()
-            .map(|kit| (kit.name.clone(), kit.local_path.clone()))
-            .collect(),
-        asset_outputs: RwLock::new(BTreeMap::new()),
-    });
+    // Build the base environment for processors.
+    let kit_imports: BTreeMap<String, PathBuf> = resolved_kits
+        .iter()
+        .map(|kit| (kit.name.clone(), kit.local_path.clone()))
+        .collect();
 
     // Separate parts from regular assets and cache them in context.
     let mut regular_assets = Vec::new();
@@ -319,12 +315,19 @@ pub async fn build_assets(config: &BuildConfig<'_>, context: &mut Context) -> st
     // then reprocess until asset outputs stabilize.
     let procs = Arc::new(procs.clone());
     let target = Arc::new(target.to_path_buf());
+    let mut asset_outputs: BTreeMap<String, String> = BTreeMap::new();
     let mut error_count;
     let max_passes = 10;
 
     for pass in 0..max_passes {
-        // Snapshot current asset_outputs to detect changes after this pass.
-        let outputs_before = env.asset_outputs.read().unwrap().clone();
+        let outputs_before = asset_outputs.clone();
+
+        // Build an immutable environment snapshot for this pass.
+        let env = Arc::new(Environment {
+            source_root: source.to_path_buf(),
+            kit_imports: kit_imports.clone(),
+            asset_outputs: asset_outputs.clone(),
+        });
 
         // Share the base context across all tasks via Arc.
         let shared_base: Arc<Context> = Arc::new(context.clone());
@@ -349,14 +352,16 @@ pub async fn build_assets(config: &BuildConfig<'_>, context: &mut Context) -> st
         let mut success_count = 0;
         error_count = 0;
 
-        // Collect asset metadata results.
+        // Collect results and rebuild asset_outputs from scratch.
+        asset_outputs.clear();
         let mut pass_results: Vec<(String, AssetMetadata)> = Vec::new();
 
         for handle in handles {
             match handle.await {
-                Ok((path, Ok(metadata))) => {
+                Ok((path, Ok(result))) => {
                     success_count += 1;
-                    pass_results.push((path, metadata));
+                    asset_outputs.insert(path.clone(), result.output_path);
+                    pass_results.push((path, result.metadata));
                 }
                 Ok((path, Err(e))) => {
                     tracing::error!("Error processing {}: {}", path, e);
@@ -387,8 +392,7 @@ pub async fn build_assets(config: &BuildConfig<'_>, context: &mut Context) -> st
         }
 
         // Check if asset outputs changed during this pass.
-        let outputs_after = env.asset_outputs.read().unwrap().clone();
-        let converged = outputs_before == outputs_after;
+        let converged = outputs_before == asset_outputs;
 
         tracing::info!(
             "Pass {}: processed {} assets ({} errors){}",
@@ -430,6 +434,11 @@ const FINALIZATION_PROCESSORS: &[&str] = &["canonicalize", "minify_html", "minif
 /// is wrapped in the pattern and processing continutes recursively.
 ///
 /// Finalization processors are run once after all transformations.
+pub struct ProcessedAsset {
+    pub output_path: String,
+    pub metadata: AssetMetadata,
+}
+
 pub async fn process_asset(
     path: &str,
     content: Vec<u8>,
@@ -438,7 +447,7 @@ pub async fn process_asset(
     base: Arc<Context>,
     target: &Path,
     clean_urls: bool,
-) -> std::io::Result<AssetMetadata> {
+) -> std::io::Result<ProcessedAsset> {
     let mut asset = Asset::new(path.into(), content);
     let mut context = LayeredContext::new(base);
     context.push_layer(); // asset-level overlay
@@ -504,16 +513,14 @@ pub async fn process_asset(
             // Run transformation processors in order.
             for proc_name in TRANSFORMATION_PROCESSORS {
                 if let Some(config) = procs.get(*proc_name) {
-                    let (modified, result) =
-                        run_processor(proc_name, config, env, &context, &mut asset);
-                    match result {
+                    match run_processor(proc_name, config, env, &context, &mut asset) {
+                        Ok(true) => {
+                            ran_processors.push(proc_name);
+                        }
+                        Ok(false) => {}
                         Err(e) => {
                             tracing::warn!("Processor `{}` failed on {}: {:?}", proc_name, path, e);
                         }
-                        Ok(()) if modified => {
-                            ran_processors.push(proc_name);
-                        }
-                        Ok(()) => {}
                     }
                 }
             }
@@ -581,15 +588,14 @@ pub async fn process_asset(
     // Perform phase two of processing (finalization).
     for proc_name in FINALIZATION_PROCESSORS {
         if let Some(config) = procs.get(*proc_name) {
-            let (modified, result) = run_processor(proc_name, config, env, &context, &mut asset);
-            match result {
+            match run_processor(proc_name, config, env, &context, &mut asset) {
+                Ok(true) => {
+                    ran_processors.push(proc_name);
+                }
+                Ok(false) => {}
                 Err(e) => {
                     tracing::warn!("Processor `{}` failed on {}: {:?}", proc_name, path, e);
                 }
-                Ok(()) if modified => {
-                    ran_processors.push(proc_name);
-                }
-                Ok(()) => {}
             }
         }
     }
@@ -642,33 +648,26 @@ pub async fn process_asset(
         );
     }
 
-    // Record the final output path for AssetRef resolution.
-    env.asset_outputs
-        .write()
-        .unwrap()
-        .insert(path.to_string(), processed_path);
-
     // Return only the page-level overlay as asset metadata.
     let page_overlay = context.pop_layer().unwrap_or_default();
-    Ok(page_overlay)
+    Ok(ProcessedAsset {
+        output_path: processed_path,
+        metadata: page_overlay,
+    })
 }
 
 /// Runs a single processor against an asset.
 ///
 /// Returns `(modified, result)` where `modified` is true if the
-/// processor changed the asset's content or media type.
+/// processor reported that it changed the asset.
 pub fn run_processor(
     name: &str,
     config: &ProcessorConfig,
     env: &Environment,
     context: &LayeredContext,
     asset: &mut Asset,
-) -> (bool, Result<(), ProcessingError>) {
-    // Capture state before processing.
-    let before_type = asset.media_type().clone();
-    let before_len = asset.as_bytes().len();
-
-    let result = match name {
+) -> Result<bool, ProcessingError> {
+    match name {
         "markdown" => MarkdownProcessor {}.process(env, context, asset),
         "template" => TemplateProcessor.process(env, context, asset),
         "favicon" => FaviconProcessor.process(env, context, asset),
@@ -696,15 +695,9 @@ pub fn run_processor(
         }
         _ => {
             tracing::warn!("Unknown processor: {}", name);
-            Ok(())
+            Ok(false)
         }
-    };
-
-    // Check if asset was modified.
-    let modified = result.is_ok()
-        && (asset.media_type() != &before_type || asset.as_bytes().len() != before_len);
-
-    (modified, result)
+    }
 }
 
 /// Rewrites an HTML output path for clean URLs.

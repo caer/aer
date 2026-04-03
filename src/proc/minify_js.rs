@@ -17,13 +17,13 @@ impl ProcessesAssets for MinifyJsProcessor {
         _env: &Environment,
         _context: &LayeredContext,
         asset: &mut Asset,
-    ) -> Result<(), ProcessingError> {
+    ) -> Result<bool, ProcessingError> {
         if asset.media_type() != &MediaType::JavaScript {
-            return Ok(());
+            return Ok(false);
         }
 
         if asset.path().ends_with(".min.js") {
-            return Ok(());
+            return Ok(false);
         }
 
         tracing::trace!("minify_js: {}", asset.path());
@@ -55,7 +55,7 @@ impl ProcessesAssets for MinifyJsProcessor {
             .build(&program);
 
         asset.replace_with_text(output.code.into(), MediaType::JavaScript);
-        Ok(())
+        Ok(true)
     }
 }
 

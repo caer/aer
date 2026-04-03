@@ -34,10 +34,10 @@ impl ProcessesAssets for ImageResizeProcessor {
         _env: &Environment,
         _context: &LayeredContext,
         asset: &mut Asset,
-    ) -> Result<(), ProcessingError> {
+    ) -> Result<bool, ProcessingError> {
         // Skip assets that aren't images.
         if asset.media_type().category() != MediaCategory::Image {
-            return Ok(());
+            return Ok(false);
         }
 
         // Extract image bytes.
@@ -55,7 +55,7 @@ impl ProcessesAssets for ImageResizeProcessor {
 
         // Skip resizing if the image is already inside the bounding box.
         if image.width() <= self.width && image.height() <= self.height {
-            return Ok(());
+            return Ok(false);
         }
 
         tracing::trace!("image: {}", asset_path);
@@ -76,7 +76,7 @@ impl ProcessesAssets for ImageResizeProcessor {
                 message: e.to_string().into(),
             })?;
 
-        Ok(())
+        Ok(true)
     }
 }
 

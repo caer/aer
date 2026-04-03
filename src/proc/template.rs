@@ -55,9 +55,9 @@ impl ProcessesAssets for TemplateProcessor {
         env: &Environment,
         context: &LayeredContext,
         asset: &mut Asset,
-    ) -> Result<(), ProcessingError> {
+    ) -> Result<bool, ProcessingError> {
         if asset.media_type().category() != MediaCategory::Text {
-            return Ok(());
+            return Ok(false);
         }
 
         tracing::trace!("template: {}", asset.path());
@@ -68,7 +68,7 @@ impl ProcessesAssets for TemplateProcessor {
         Self::compile_template(env, context, &mut lexer, &mut output)?;
         asset.replace_with_text(output.into(), asset.media_type().clone());
 
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -129,8 +129,9 @@ impl TemplateProcessor {
                                         break;
                                     }
                                     Some(ContextValue::AssetRef(path)) => {
-                                        let outputs = env.asset_outputs.read().unwrap();
-                                        if let Some(output_path) = outputs.get(path.as_str()) {
+                                        if let Some(output_path) =
+                                            env.asset_outputs.get(path.as_str())
+                                        {
                                             resolved = Some(format!("/{}", output_path).into());
                                         }
                                         break;

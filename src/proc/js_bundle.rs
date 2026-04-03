@@ -119,10 +119,10 @@ impl ProcessesAssets for JsBundleProcessor {
         _env: &Environment,
         _context: &LayeredContext,
         asset: &mut Asset,
-    ) -> Result<(), ProcessingError> {
+    ) -> Result<bool, ProcessingError> {
         // Skip assets that aren't JavaScript.
         if *asset.media_type() != MediaType::JavaScript {
-            return Ok(());
+            return Ok(false);
         }
 
         tracing::trace!("js_bundle: {}", asset.path());
@@ -137,7 +137,7 @@ impl ProcessesAssets for JsBundleProcessor {
         // Update the asset's contents with the bundled code.
         asset.replace_with_text(bundled_code.into(), MediaType::JavaScript);
 
-        Ok(())
+        Ok(true)
     }
 }
 

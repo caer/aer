@@ -86,10 +86,11 @@ impl From<&CachedEntry> for OgMetadata {
 
 /// Returns a stable hash of a URL for use as a cache filename.
 fn url_hash(url: &str) -> String {
-    use std::hash::{DefaultHasher, Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    url.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    let mut hasher = codas::types::cryptography::CryptoHasher::default();
+    hasher.write(url.as_bytes());
+    let hash = hasher.finalize();
+    // Use the first 8 bytes of the Blake3 hash for a compact filename.
+    hash.iter().take(8).map(|b| format!("{:02x}", b)).collect()
 }
 
 /// Derives an image file extension from a Content-Type header value.

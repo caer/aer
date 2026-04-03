@@ -26,9 +26,9 @@ impl ProcessesAssets for ScssProcessor {
         env: &Environment,
         _context: &LayeredContext,
         asset: &mut Asset,
-    ) -> Result<(), ProcessingError> {
+    ) -> Result<bool, ProcessingError> {
         if *asset.media_type() != MediaType::Scss {
-            return Ok(());
+            return Ok(false);
         }
 
         tracing::trace!("scss: {}", asset.path());
@@ -57,7 +57,7 @@ impl ProcessesAssets for ScssProcessor {
         // Update the asset's contents and media type.
         asset.replace_with_text(css.into(), MediaType::Css);
 
-        Ok(())
+        Ok(true)
     }
 }
 

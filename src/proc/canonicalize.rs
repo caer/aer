@@ -240,21 +240,22 @@ impl ProcessesAssets for CanonicalizeProcessor {
         _env: &Environment,
         _context: &LayeredContext,
         asset: &mut Asset,
-    ) -> Result<(), ProcessingError> {
+    ) -> Result<bool, ProcessingError> {
         match asset.media_type() {
             MediaType::Html => {
                 tracing::trace!("canonicalize: {}", asset.path());
                 let canonical = self.process_html(asset.as_text()?, asset.path())?;
                 asset.replace_with_text(canonical.into(), MediaType::Html);
+                Ok(true)
             }
             MediaType::Css => {
                 tracing::trace!("canonicalize: {}", asset.path());
                 let canonical = self.process_css(asset.as_text()?, asset.path());
                 asset.replace_with_text(canonical.into(), MediaType::Css);
+                Ok(true)
             }
-            _ => {}
+            _ => Ok(false),
         }
-        Ok(())
     }
 }
 
