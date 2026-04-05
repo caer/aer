@@ -465,26 +465,182 @@ mod tests {
     use super::*;
     use crate::proc::LayeredContext;
 
+    fn compile(md: &str) -> String {
+        let mut asset = Asset::new("test.md".into(), md.as_bytes().to_vec());
+        MarkdownProcessor {}
+            .process(
+                &Environment::test(),
+                &LayeredContext::from_flat(Default::default()),
+                &mut asset,
+            )
+            .unwrap();
+        assert_eq!(asset.media_type(), &MediaType::Html);
+        asset.as_text().unwrap().to_string()
+    }
+
     #[test]
-    fn processes_markdown() {
-        let mut markdown_asset = Asset::new(
-            "test.md".into(),
-            "# Header 1\nBody\n> Quotation in **bold** and _italics_."
-                .as_bytes()
-                .to_vec(),
-        );
-
-        let _ = MarkdownProcessor {}.process(
-            &Environment::test(),
-            &LayeredContext::from_flat(Default::default()),
-            &mut markdown_asset,
-        );
-
+    fn headers_paragraphs_bold_italic_blockquote() {
+        let html = compile("# Header 1\nBody\n> Quotation in **bold** and _italics_.");
         assert_eq!(
-            "<h1 id=\"header-1\">Header 1</h1><p>Body</p><blockquote><p>Quotation in <strong>bold</strong> and <em>italics</em>.</p></blockquote>",
-            markdown_asset.as_text().unwrap()
+            html,
+            "<h1 id=\"header-1\">Header 1</h1><p>Body</p><blockquote><p>Quotation in <strong>bold</strong> and <em>italics</em>.</p></blockquote>"
         );
+    }
 
-        assert_eq!(&MediaType::Html, markdown_asset.media_type());
+    #[test]
+    fn heading_id_deduplication() {
+        let html = compile("# Foo\n## Foo\n### Foo");
+        assert!(html.contains("id=\"foo\""));
+        assert!(html.contains("id=\"foo-2\""));
+        assert!(html.contains("id=\"foo-3\""));
+    }
+
+    #[test]
+    fn inline_links() {
+        let html = compile("[Click here](https://example.com)");
+        assert_eq!(
+            html,
+            "<p><a href=\"https://example.com\">Click here</a></p>"
+        );
+    }
+
+    #[test]
+    fn link_with_title() {
+        let html = compile(r#"[text](https://example.com "My Title")"#);
+        assert!(html.contains(r#"title="My Title""#));
+        assert!(html.contains(r#"href="https://example.com""#));
+    }
+
+    #[test]
+    fn inline_images() {
+        let html = compile("![alt text](/img.png)");
+        assert_eq!(html, "<p><img alt=\"alt text\" src=\"/img.png\"></p>");
+    }
+
+    #[test]
+    fn image_with_title() {
+        let html = compile(r#"![photo](/img.png "A photo")"#);
+        assert!(html.contains(r#"alt="photo""#));
+        assert!(html.contains(r#"src="/img.png""#));
+        assert!(html.contains(r#"title="A photo""#));
+    }
+
+    #[test]
+    fn inline_code() {
+        let html = compile("Use `println!` to print.");
+        assert!(html.contains("<code>println!</code>"));
+    }
+
+    #[test]
+    fn fenced_code_block() {
+        let html = compile("```rust\nfn main() {}\n```");
+        assert!(html.contains(r#"<pre rel="rust"><code class="language-rust">"#));
+        assert!(html.contains("fn main() {}"));
+        assert!(html.contains("</code></pre>"));
+    }
+
+    #[test]
+    fn fenced_code_block_no_language() {
+        let html = compile("```\nplain code\n```");
+        assert!(html.contains("<pre><code>plain code</code></pre>"));
+    }
+
+    #[test]
+    fn unordered_list() {
+        let html = compile("- one\n- two\n- three");
+        assert!(html.contains("<ul>"));
+        assert!(html.contains("<li><p>one</p></li>"));
+        assert!(html.contains("<li><p>two</p></li>"));
+        assert!(html.contains("<li><p>three</p></li>"));
+        assert!(html.contains("</ul>"));
+    }
+
+    #[test]
+    fn ordered_list() {
+        let html = compile("1. first\n2. second");
+        assert!(html.contains("<ol>"));
+        assert!(html.contains("<li><p>first</p></li>"));
+        assert!(html.contains("<li><p>second</p></li>"));
+        assert!(html.contains("</ol>"));
+    }
+
+    #[test]
+    fn gfm_table() {
+        let html = compile("| A | B |\n|---|---|\n| 1 | 2 |");
+        assert!(html.contains("<table>"));
+        assert!(html.contains("<thead>"));
+        assert!(html.contains("<th>A</th>"));
+        assert!(html.contains("<th>B</th>"));
+        assert!(html.contains("<tbody>"));
+        assert!(html.contains("<td>1</td>"));
+        assert!(html.contains("<td>2</td>"));
+    }
+
+    #[test]
+    fn gfm_table_alignment() {
+        let html = compile("| L | C | R |\n|:--|:-:|--:|\n| a | b | c |");
+        assert!(html.contains(r#"<th align="left">L</th>"#));
+        assert!(html.contains(r#"<th align="center">C</th>"#));
+        assert!(html.contains(r#"<th align="right">R</th>"#));
+        assert!(html.contains(r#"<td align="left">a</td>"#));
+    }
+
+    #[test]
+    fn gfm_strikethrough() {
+        let html = compile("~~deleted~~");
+        assert!(html.contains("<s>deleted</s>"));
+    }
+
+    #[test]
+    fn em_dash_conversion() {
+        let html = compile("Hello -- world");
+        assert!(html.contains("Hello \u{2014} world"));
+    }
+
+    #[test]
+    fn thematic_break() {
+        let html = compile("above\n\n---\n\nbelow");
+        assert!(html.contains("<hr/>"));
+    }
+
+    #[test]
+    fn raw_html_passthrough() {
+        let html = compile("<div class=\"custom\">content</div>");
+        assert!(html.contains("<div class=\"custom\">content</div>"));
+    }
+
+    #[test]
+    fn line_break() {
+        let html = compile("line one  \nline two");
+        assert!(html.contains("<br/>"));
+    }
+
+    #[test]
+    fn footnotes() {
+        let html = compile("Text[^1] and more[^2].\n\n[^1]: First note.\n[^2]: Second note.");
+        // References should be superscript links.
+        assert!(html.contains(r##"<sup><a id="fnref-1" href="#fn-1""##));
+        assert!(html.contains(r##"<sup><a id="fnref-2" href="#fn-2""##));
+        // Definitions should be in a footnotes section.
+        assert!(html.contains(r##"<section class="footnotes""##));
+        assert!(html.contains(r##"<li id="fn-1">"##));
+        assert!(html.contains(r##"<li id="fn-2">"##));
+        // Back-links should be present.
+        assert!(html.contains(r##"href="#fnref-1""##));
+        assert!(html.contains(r##"href="#fnref-2""##));
+    }
+
+    #[test]
+    fn skips_non_markdown() {
+        let mut asset = Asset::new("page.html".into(), b"<h1>Hello</h1>".to_vec());
+        let modified = MarkdownProcessor {}
+            .process(
+                &Environment::test(),
+                &LayeredContext::from_flat(Default::default()),
+                &mut asset,
+            )
+            .unwrap();
+        assert!(!modified);
+        assert_eq!(asset.as_text().unwrap(), "<h1>Hello</h1>");
     }
 }

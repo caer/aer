@@ -113,4 +113,37 @@ mod tests {
         assert_eq!(width, resized_image.width());
         assert_eq!(243, resized_image.height());
     }
+
+    #[test]
+    fn skips_image_already_within_bounds() {
+        let source_bytes = std::fs::read("test/example.png").unwrap();
+        let original_bytes = source_bytes.clone();
+
+        let mut asset = Asset::new("photo.png".into(), source_bytes);
+
+        // Use dimensions larger than the test image.
+        let modified = ImageResizeProcessor::new(9999, 9999)
+            .process(
+                &Environment::test(),
+                &LayeredContext::from_flat(Default::default()),
+                &mut asset,
+            )
+            .unwrap();
+
+        assert!(!modified);
+        assert_eq!(asset.as_bytes(), &original_bytes);
+    }
+
+    #[test]
+    fn skips_non_image_assets() {
+        let mut asset = Asset::new("style.css".into(), b"body {}".to_vec());
+        let modified = ImageResizeProcessor::new(300, 300)
+            .process(
+                &Environment::test(),
+                &LayeredContext::from_flat(Default::default()),
+                &mut asset,
+            )
+            .unwrap();
+        assert!(!modified);
+    }
 }

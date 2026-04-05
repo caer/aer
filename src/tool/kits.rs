@@ -741,36 +741,38 @@ mod tests {
         assert_eq!(entry.hash, "deadbeef");
     }
 
+    fn kit_config(git_ref: &str, vendored: bool) -> KitConfig {
+        KitConfig {
+            git_url: "git@github.com:example/brand.git".to_string(),
+            git_ref: git_ref.to_string(),
+            dest: None,
+            path: None,
+            vendored,
+        }
+    }
+
+    fn lockfile_entry(git_ref: &str, hash: &str) -> LockfileEntry {
+        LockfileEntry {
+            git: "git@github.com:example/brand.git".to_string(),
+            git_ref: git_ref.to_string(),
+            commit: "abc123".to_string(),
+            hash: hash.to_string(),
+        }
+    }
+
     #[tokio::test]
     async fn drift_detection_catches_ref_change() {
-        let temp = std::env::temp_dir().join("aer-test-drift-ref");
-        let _ = fs::remove_dir_all(&temp).await;
-        fs::create_dir_all(&temp).await.unwrap();
+        let temp = tempfile::tempdir().unwrap();
 
         let mut kits = BTreeMap::new();
-        kits.insert(
-            "brand".to_string(),
-            KitConfig {
-                git_url: "git@github.com:example/brand.git".to_string(),
-                git_ref: "v2.0".to_string(),
-                dest: None,
-                path: None,
-                vendored: true,
-            },
-        );
+        kits.insert("brand".to_string(), kit_config("v2.0", true));
 
         let mut lockfile = Lockfile::default();
-        lockfile.kits.insert(
-            "brand".to_string(),
-            LockfileEntry {
-                git: "git@github.com:example/brand.git".to_string(),
-                git_ref: "v1.0".to_string(),
-                commit: "abc123".to_string(),
-                hash: "deadbeef".to_string(),
-            },
-        );
+        lockfile
+            .kits
+            .insert("brand".to_string(), lockfile_entry("v1.0", "deadbeef"));
 
-        let result = check_lockfile_drift(&kits, Some(&lockfile), &temp).await;
+        let result = check_lockfile_drift(&kits, Some(&lockfile), temp.path()).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -778,44 +780,28 @@ mod tests {
             "got: {}",
             err
         );
-
-        let _ = fs::remove_dir_all(&temp).await;
     }
 
     #[tokio::test]
     async fn drift_detection_catches_missing_vendored() {
-        let temp = std::env::temp_dir().join("aer-test-drift-missing");
-        let _ = fs::remove_dir_all(&temp).await;
-        fs::create_dir_all(&temp).await.unwrap();
+        let temp = tempfile::tempdir().unwrap();
 
         let mut kits = BTreeMap::new();
-        kits.insert(
-            "brand".to_string(),
-            KitConfig {
-                git_url: "git@github.com:example/brand.git".to_string(),
-                git_ref: "main".to_string(),
-                dest: None,
-                path: None,
-                vendored: true,
-            },
-        );
+        kits.insert("brand".to_string(), kit_config("main", true));
 
         let lockfile = Lockfile::default();
-        let result = check_lockfile_drift(&kits, Some(&lockfile), &temp).await;
+        let result = check_lockfile_drift(&kits, Some(&lockfile), temp.path()).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("missing from lockfile"), "got: {}", err);
-
-        let _ = fs::remove_dir_all(&temp).await;
     }
 
     #[tokio::test]
     async fn drift_detection_ok_for_matching_lockfile() {
-        let temp = std::env::temp_dir().join("aer-test-drift-ok");
-        let _ = fs::remove_dir_all(&temp).await;
-        fs::create_dir_all(&temp).await.unwrap();
+        let temp = tempfile::tempdir().unwrap();
+
         // Create vendored dir with a file so the hash can be computed.
-        let vendored_dir = temp.join(VENDORED_KITS_DIR).join("brand");
+        let vendored_dir = temp.path().join(VENDORED_KITS_DIR).join("brand");
         fs::create_dir_all(&vendored_dir).await.unwrap();
         fs::write(vendored_dir.join("test.txt"), "hello")
             .await
@@ -823,41 +809,23 @@ mod tests {
         let expected_hash = hash_directory(&vendored_dir).await.unwrap();
 
         let mut kits = BTreeMap::new();
-        kits.insert(
-            "brand".to_string(),
-            KitConfig {
-                git_url: "git@github.com:example/brand.git".to_string(),
-                git_ref: "main".to_string(),
-                dest: None,
-                path: None,
-                vendored: true,
-            },
-        );
+        kits.insert("brand".to_string(), kit_config("main", true));
 
         let mut lockfile = Lockfile::default();
-        lockfile.kits.insert(
-            "brand".to_string(),
-            LockfileEntry {
-                git: "git@github.com:example/brand.git".to_string(),
-                git_ref: "main".to_string(),
-                commit: "abc123".to_string(),
-                hash: expected_hash,
-            },
-        );
+        lockfile
+            .kits
+            .insert("brand".to_string(), lockfile_entry("main", &expected_hash));
 
-        let result = check_lockfile_drift(&kits, Some(&lockfile), &temp).await;
+        let result = check_lockfile_drift(&kits, Some(&lockfile), temp.path()).await;
         assert!(result.is_ok());
-
-        let _ = fs::remove_dir_all(&temp).await;
     }
 
     #[tokio::test]
     async fn drift_detection_catches_file_modification() {
-        let temp = std::env::temp_dir().join("aer-test-drift-tamper");
-        let _ = fs::remove_dir_all(&temp).await;
-        fs::create_dir_all(&temp).await.unwrap();
+        let temp = tempfile::tempdir().unwrap();
+
         // Create vendored dir with a file.
-        let vendored_dir = temp.join(VENDORED_KITS_DIR).join("brand");
+        let vendored_dir = temp.path().join(VENDORED_KITS_DIR).join("brand");
         fs::create_dir_all(&vendored_dir).await.unwrap();
         fs::write(vendored_dir.join("test.txt"), "hello")
             .await
@@ -870,29 +838,14 @@ mod tests {
             .unwrap();
 
         let mut kits = BTreeMap::new();
-        kits.insert(
-            "brand".to_string(),
-            KitConfig {
-                git_url: "git@github.com:example/brand.git".to_string(),
-                git_ref: "main".to_string(),
-                dest: None,
-                path: None,
-                vendored: true,
-            },
-        );
+        kits.insert("brand".to_string(), kit_config("main", true));
 
         let mut lockfile = Lockfile::default();
-        lockfile.kits.insert(
-            "brand".to_string(),
-            LockfileEntry {
-                git: "git@github.com:example/brand.git".to_string(),
-                git_ref: "main".to_string(),
-                commit: "abc123".to_string(),
-                hash: original_hash,
-            },
-        );
+        lockfile
+            .kits
+            .insert("brand".to_string(), lockfile_entry("main", &original_hash));
 
-        let result = check_lockfile_drift(&kits, Some(&lockfile), &temp).await;
+        let result = check_lockfile_drift(&kits, Some(&lockfile), temp.path()).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -900,62 +853,47 @@ mod tests {
             "got: {}",
             err
         );
-
-        let _ = fs::remove_dir_all(&temp).await;
     }
 
     #[tokio::test]
     async fn drift_detection_ok_for_non_vendored_without_lockfile() {
-        let temp = std::env::temp_dir().join("aer-test-drift-nonvendored");
-        let _ = fs::remove_dir_all(&temp).await;
-        fs::create_dir_all(&temp).await.unwrap();
+        let temp = tempfile::tempdir().unwrap();
 
         let mut kits = BTreeMap::new();
-        kits.insert(
-            "brand".to_string(),
-            KitConfig {
-                git_url: "git@github.com:example/brand.git".to_string(),
-                git_ref: "main".to_string(),
-                dest: None,
-                path: None,
-                vendored: false,
-            },
-        );
+        kits.insert("brand".to_string(), kit_config("main", false));
 
-        let result = check_lockfile_drift(&kits, None, &temp).await;
+        let result = check_lockfile_drift(&kits, None, temp.path()).await;
         assert!(result.is_ok());
-
-        let _ = fs::remove_dir_all(&temp).await;
     }
 
     #[tokio::test]
     async fn ensure_aer_directory_is_idempotent() {
-        let temp = std::env::temp_dir().join("aer-test-ensure-aer-dir");
-        let _ = fs::remove_dir_all(&temp).await;
-        fs::create_dir_all(&temp).await.unwrap();
+        let temp = tempfile::tempdir().unwrap();
 
         // First call creates everything.
-        ensure_aer_directory(&temp).await.unwrap();
-        assert!(fs::try_exists(temp.join(".aer/kits/cached")).await.unwrap());
+        ensure_aer_directory(temp.path()).await.unwrap();
         assert!(
-            fs::try_exists(temp.join(".aer/kits/vendored"))
+            fs::try_exists(temp.path().join(".aer/kits/cached"))
+                .await
+                .unwrap()
+        );
+        assert!(
+            fs::try_exists(temp.path().join(".aer/kits/vendored"))
                 .await
                 .unwrap()
         );
 
-        let gitignore = fs::read_to_string(temp.join(".aer/.gitignore"))
+        let gitignore = fs::read_to_string(temp.path().join(".aer/.gitignore"))
             .await
             .unwrap();
         assert_eq!(gitignore, GITIGNORE_CONTENT);
 
-        let gitattributes = fs::read_to_string(temp.join(".aer/.gitattributes"))
+        let gitattributes = fs::read_to_string(temp.path().join(".aer/.gitattributes"))
             .await
             .unwrap();
         assert_eq!(gitattributes, GITATTRIBUTES_CONTENT);
 
         // Second call succeeds without error.
-        ensure_aer_directory(&temp).await.unwrap();
-
-        let _ = fs::remove_dir_all(&temp).await;
+        ensure_aer_directory(temp.path()).await.unwrap();
     }
 }

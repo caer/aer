@@ -97,13 +97,14 @@ mod tests {
     #[test]
     fn skips_non_js() {
         let mut asset = Asset::new("index.html".into(), b"<html></html>".to_vec());
-        MinifyJsProcessor
+        let modified = MinifyJsProcessor
             .process(
                 &Environment::test(),
                 &LayeredContext::from_flat(Default::default()),
                 &mut asset,
             )
             .unwrap();
+        assert!(!modified);
         assert_eq!(asset.as_text().unwrap(), "<html></html>");
     }
 
@@ -111,14 +112,26 @@ mod tests {
     fn skips_already_minified() {
         let js = "function test(){console.log('already minified')}";
         let mut asset = Asset::new("vendor.min.js".into(), js.as_bytes().to_vec());
-        MinifyJsProcessor
+        let modified = MinifyJsProcessor
             .process(
                 &Environment::test(),
                 &LayeredContext::from_flat(Default::default()),
                 &mut asset,
             )
             .unwrap();
-        // Content should be unchanged.
+        assert!(!modified);
         assert_eq!(asset.as_text().unwrap(), js);
+    }
+
+    #[test]
+    fn rejects_invalid_js() {
+        let js = "function {{{ invalid syntax";
+        let mut asset = Asset::new("bad.js".into(), js.as_bytes().to_vec());
+        let result = MinifyJsProcessor.process(
+            &Environment::test(),
+            &LayeredContext::from_flat(Default::default()),
+            &mut asset,
+        );
+        assert!(result.is_err());
     }
 }

@@ -50,7 +50,7 @@ mod tests {
     use crate::proc::LayeredContext;
 
     #[test]
-    fn minifies_html() {
+    fn removes_html_comments() {
         let html = r#"
             <!DOCTYPE html>
             <html>
@@ -81,13 +81,14 @@ mod tests {
     #[test]
     fn skips_non_html() {
         let mut asset = Asset::new("style.css".into(), b"body { }".to_vec());
-        MinifyHtmlProcessor
+        let modified = MinifyHtmlProcessor
             .process(
                 &Environment::test(),
                 &LayeredContext::from_flat(Default::default()),
                 &mut asset,
             )
             .unwrap();
+        assert!(!modified);
         assert_eq!(asset.as_text().unwrap(), "body { }");
     }
 }

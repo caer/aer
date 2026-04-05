@@ -399,12 +399,14 @@ mod tests {
     fn skips_non_html_css_assets() {
         let p = processor();
         let mut asset = Asset::new("script.js".into(), b"const x = '/api'".to_vec());
-        p.process(
-            &Environment::test(),
-            &LayeredContext::from_flat(Default::default()),
-            &mut asset,
-        )
-        .unwrap();
+        let modified = p
+            .process(
+                &Environment::test(),
+                &LayeredContext::from_flat(Default::default()),
+                &mut asset,
+            )
+            .unwrap();
+        assert!(!modified);
         assert_eq!(asset.as_text().unwrap(), "const x = '/api'");
     }
 
@@ -464,5 +466,65 @@ mod tests {
         let result = p.process_html(html, &"/page.html".into()).unwrap();
         // Non-URL content should be preserved as-is.
         assert!(result.contains(r#"content="A description""#));
+    }
+
+    #[test]
+    fn preserves_empty_href() {
+        let p = processor();
+        assert_eq!(p.canonicalize_url("", "/page.html"), "");
+    }
+
+    #[test]
+    fn canonicalizes_relative_url_with_query_and_fragment() {
+        let p = processor();
+        // Relative URL with query string.
+        let result = p.canonicalize_url("page.html?v=1", "/dir/index.html");
+        assert_eq!(result, "https://example.com/dir/page.html?v=1");
+
+        // Absolute path with fragment.
+        let result = p.canonicalize_url("/page.html#section", "/any.html");
+        assert_eq!(result, "https://example.com/page.html#section");
+    }
+
+    #[test]
+    fn processes_each_html_attribute_independently() {
+        let p = processor();
+        // Verify each URL-bearing attribute is processed.
+        let html = r#"<form action="/submit"><video poster="/thumb.jpg"></video></form>"#;
+        let result = p.process_html(html, &"/page.html".into()).unwrap();
+        assert!(
+            result.contains(r#"action="https://example.com/submit""#),
+            "action not canonicalized: {}",
+            result
+        );
+        assert!(
+            result.contains(r#"poster="https://example.com/thumb.jpg""#),
+            "poster not canonicalized: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn css_url_with_single_quotes() {
+        let p = processor();
+        let css = "div { background: url('../bg.png'); }";
+        let result = p.process_css(css, "styles/main.css");
+        assert!(
+            result.contains("https://example.com/bg.png"),
+            "got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn css_url_without_quotes() {
+        let p = processor();
+        let css = "div { background: url(../bg.png); }";
+        let result = p.process_css(css, "styles/main.css");
+        assert!(
+            result.contains("https://example.com/bg.png"),
+            "got: {}",
+            result
+        );
     }
 }

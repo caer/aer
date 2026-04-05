@@ -153,13 +153,15 @@ mod tests {
         // Create a non-JavaScript asset.
         let mut css_asset = Asset::new("style.css".into(), "body {}".as_bytes().to_vec());
 
-        // Processing should succeed (skip) without errors.
-        let result = processor.process(
-            &Environment::test(),
-            &LayeredContext::from_flat(Default::default()),
-            &mut css_asset,
-        );
-        assert!(result.is_ok());
+        // Processing should skip without errors.
+        let modified = processor
+            .process(
+                &Environment::test(),
+                &LayeredContext::from_flat(Default::default()),
+                &mut css_asset,
+            )
+            .unwrap();
+        assert!(!modified);
     }
 
     #[test]

@@ -107,7 +107,7 @@ mod tests {
         let original_len = asset.as_bytes().len();
 
         // Process should skip this file.
-        FaviconProcessor
+        let modified = FaviconProcessor
             .process(
                 &Environment::test(),
                 &LayeredContext::from_flat(Default::default()),
@@ -115,7 +115,8 @@ mod tests {
             )
             .unwrap();
 
-        // Verify the asset wasn't modified.
+        // Verify the processor reported no modification.
+        assert!(!modified);
         assert_eq!(asset.media_type(), &MediaType::Png);
         assert_eq!(asset.as_bytes().len(), original_len);
     }

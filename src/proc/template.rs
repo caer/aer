@@ -686,7 +686,7 @@ impl TemplateProcessor {
 
 #[cfg(test)]
 mod tests {
-    use crate::proc::{Asset, Context, MediaType, extract_frontmatter};
+    use crate::proc::{Asset, Context, extract_frontmatter};
 
     use super::*;
 
@@ -747,7 +747,6 @@ mod tests {
             "test.html".into(),
             r#"{~ if is_empty}This is empty!{~ end}"#.trim().as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let ctx: Context = [("is_empty".into(), ContextValue::Text("true".into()))].into();
         run(&ctx, &mut asset);
@@ -761,7 +760,6 @@ mod tests {
             "test.html".into(),
             r#"{~ if not is_empty}Not empty!{~ end}"#.trim().as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         // When is_empty is false, "not is_empty" should render the block.
         let ctx: Context = [("is_empty".into(), ContextValue::Text("false".into()))].into();
@@ -776,7 +774,6 @@ mod tests {
             "test.html".into(),
             r#"{~ if not is_empty}Not empty!{~ end}"#.trim().as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         // When is_empty is true, "not is_empty" should NOT render the block.
         let ctx: Context = [("is_empty".into(), ContextValue::Text("true".into()))].into();
@@ -791,7 +788,6 @@ mod tests {
             "test.html".into(),
             r#"{~ if not missing}Default content{~ end}"#.trim().as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         // When variable is missing (falsy), "not missing" should render the block.
         let ctx = Context::default();
@@ -809,7 +805,6 @@ mod tests {
                 .as_bytes()
                 .to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let ctx: Context = [(
             "items".into(),
@@ -1009,7 +1004,6 @@ a delimiter in it"#;
             "test.html".into(),
             r#"{~ if user.active}Active!{~ end}"#.as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let mut nested = Context::default();
         nested.insert("active".into(), ContextValue::Text("true".into()));
@@ -1025,7 +1019,6 @@ a delimiter in it"#;
             "test.html".into(),
             r#"{~ for x in data.items}{~ get x} {~ end}"#.as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let mut nested = Context::default();
         nested.insert(
@@ -1045,7 +1038,6 @@ a delimiter in it"#;
     #[test]
     fn deeply_nested_dotted_access() {
         let mut asset = Asset::new("test.html".into(), r#"{~ get a.b.c}"#.as_bytes().to_vec());
-        asset.set_media_type(MediaType::Html);
 
         let mut inner = Context::default();
         inner.insert("c".into(), ContextValue::Text("deep".into()));
@@ -1063,7 +1055,6 @@ a delimiter in it"#;
             "test.html".into(),
             r#"{~ get user.missing}"#.as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let ctx = Context::default();
         run(&ctx, &mut asset);
@@ -1077,7 +1068,6 @@ a delimiter in it"#;
             "test.html".into(),
             r#"{~ get title or name}"#.as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let ctx: Context = [("name".into(), ContextValue::Text("Alice".into()))].into();
         run(&ctx, &mut asset);
@@ -1091,7 +1081,6 @@ a delimiter in it"#;
             "test.html".into(),
             r#"{~ get title or name}"#.as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let ctx: Context = [
             ("title".into(), ContextValue::Text("Hello".into())),
@@ -1109,7 +1098,6 @@ a delimiter in it"#;
             "test.html".into(),
             r#"{~ get a or b or c}"#.as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let ctx: Context = [("c".into(), ContextValue::Text("third".into()))].into();
         run(&ctx, &mut asset);
@@ -1123,7 +1111,6 @@ a delimiter in it"#;
             "test.html".into(),
             r#"{~ get title or name}"#.as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let ctx = Context::default();
         run(&ctx, &mut asset);
@@ -1137,7 +1124,6 @@ a delimiter in it"#;
             "test.html".into(),
             r#"{~ get page.title or site.name}"#.as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let mut site = Context::default();
         site.insert("name".into(), ContextValue::Text("My Site".into()));
@@ -1273,7 +1259,6 @@ a delimiter in it"#;
                 .as_bytes()
                 .to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let mut alice = Context::default();
         alice.insert("name".into(), ContextValue::Text("Alice".into()));
@@ -1298,7 +1283,6 @@ a delimiter in it"#;
             "test.html".into(),
             r#"{~ for item in items}{~ get item} {~ end}"#.as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let ctx: Context = [(
             "items".into(),
@@ -1340,7 +1324,6 @@ url = "/about"
     #[test]
     fn get_renders_list_of_tables() {
         let mut asset = Asset::new("test.html".into(), r#"{~ get items}"#.as_bytes().to_vec());
-        asset.set_media_type(MediaType::Html);
 
         let mut entry = Context::default();
         entry.insert("name".into(), ContextValue::Text("x".into()));
@@ -1369,7 +1352,6 @@ url = "/about"
                 .as_bytes()
                 .to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let mut colors = Context::default();
         colors.insert("blue".into(), ContextValue::Text("#00f".into()));
@@ -1391,7 +1373,6 @@ url = "/about"
                 .as_bytes()
                 .to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let mut alice = Context::default();
         alice.insert("role".into(), ContextValue::Text("admin".into()));
@@ -1414,7 +1395,6 @@ url = "/about"
             "test.html".into(),
             r#"before{~ for k, v in empty}nope{~ end}after"#.as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let ctx: Context = [("empty".into(), ContextValue::Table(Context::default()))].into();
         run(&ctx, &mut asset);
@@ -1448,7 +1428,6 @@ prod = "https://example.com"
             "test.html".into(),
             r#"{~ if role is "admin"}yes{~ end}"#.as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let ctx: Context = [("role".into(), ContextValue::Text("admin".into()))].into();
         run(&ctx, &mut asset);
@@ -1462,7 +1441,6 @@ prod = "https://example.com"
             "test.html".into(),
             r#"{~ if role is "admin"}yes{~ end}"#.as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let ctx: Context = [("role".into(), ContextValue::Text("editor".into()))].into();
         run(&ctx, &mut asset);
@@ -1476,7 +1454,6 @@ prod = "https://example.com"
             "test.html".into(),
             r#"{~ if role is not "admin"}restricted{~ end}"#.as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let ctx: Context = [("role".into(), ContextValue::Text("editor".into()))].into();
         run(&ctx, &mut asset);
@@ -1490,7 +1467,6 @@ prod = "https://example.com"
             "test.html".into(),
             r#"{~ if role is not "admin"}restricted{~ end}"#.as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let ctx: Context = [("role".into(), ContextValue::Text("admin".into()))].into();
         run(&ctx, &mut asset);
@@ -1504,7 +1480,6 @@ prod = "https://example.com"
             "test.html".into(),
             r#"{~ if color is favorite}match{~ end}"#.as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let ctx: Context = [
             ("color".into(), ContextValue::Text("blue".into())),
@@ -1522,7 +1497,6 @@ prod = "https://example.com"
             "test.html".into(),
             r#"{~ if missing is "value"}yes{~ end}"#.as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let ctx = Context::default();
         run(&ctx, &mut asset);
@@ -1536,7 +1510,6 @@ prod = "https://example.com"
             "test.html".into(),
             r#"{~ if missing is not "value"}yes{~ end}"#.as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let ctx = Context::default();
         run(&ctx, &mut asset);
@@ -1553,7 +1526,6 @@ prod = "https://example.com"
                 .as_bytes()
                 .to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let ctx = Context::default();
         run(&ctx, &mut asset);
@@ -1568,7 +1540,6 @@ prod = "https://example.com"
                 .as_bytes()
                 .to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         // Empty list means the directory exists but no assets have completed yet.
         let mut ctx = Context::default();
@@ -1586,7 +1557,6 @@ prod = "https://example.com"
                 .as_bytes()
                 .to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let mut entry1 = Context::default();
         entry1.insert("title".into(), ContextValue::Text("hello".into()));
@@ -1615,7 +1585,6 @@ prod = "https://example.com"
                 .as_bytes()
                 .to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let mut entry = Context::default();
         entry.insert("title".into(), ContextValue::Text("My Post".into()));
@@ -1645,7 +1614,6 @@ prod = "https://example.com"
                 .as_bytes()
                 .to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let mut ctx = Context::default();
         // Hydrated entries already present at the root path.
@@ -1670,7 +1638,6 @@ prod = "https://example.com"
                 .as_bytes()
                 .to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let mut ctx = Context::default();
         // Entry at root path (e.g., from hydration).
@@ -1698,7 +1665,6 @@ prod = "https://example.com"
         let template = r#"{~ for item in assets "logs" sort date desc}{~ get item.title}: {~ get item.date}
 {~ end}"#;
         let mut asset = Asset::new("index.html".into(), template.as_bytes().to_vec());
-        asset.set_media_type(MediaType::Html);
 
         let mut entry1 = Context::default();
         entry1.insert("title".into(), ContextValue::Text("Old Post".into()));
@@ -1734,7 +1700,6 @@ prod = "https://example.com"
     fn for_assets_sort_date_asc() {
         let template = r#"{~ for item in assets "logs" sort date asc}{~ get item.title}, {~ end}"#;
         let mut asset = Asset::new("index.html".into(), template.as_bytes().to_vec());
-        asset.set_media_type(MediaType::Html);
 
         let mut entry1 = Context::default();
         entry1.insert("title".into(), ContextValue::Text("New".into()));
@@ -1764,7 +1729,6 @@ prod = "https://example.com"
             "test.html".into(),
             r#"{~ date mydate "%m.%d.%Y"}"#.as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let ctx: Context = [("mydate".into(), ContextValue::Text("2025-04-17".into()))].into();
         run(&ctx, &mut asset);
@@ -1777,7 +1741,6 @@ prod = "https://example.com"
             "test.html".into(),
             r#"{~ date d "%m.%d.%Y"}"#.as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let ctx: Context = [(
             "d".into(),
@@ -1794,7 +1757,6 @@ prod = "https://example.com"
             "test.html".into(),
             r#"{~ date d "%m.%d.%Y"}"#.as_bytes().to_vec(),
         );
-        asset.set_media_type(MediaType::Html);
 
         let ctx: Context = [("d".into(), ContextValue::Text("not a date".into()))].into();
         run(&ctx, &mut asset);

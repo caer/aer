@@ -47,6 +47,7 @@ dependencies = [
  "ratatui",
  "reqwest",
  "serde",
+ "tempfile",
  "test-log",
  "tokio",
  "toml",
